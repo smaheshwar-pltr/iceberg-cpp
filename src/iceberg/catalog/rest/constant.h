@@ -38,6 +38,9 @@ inline const std::string kMimeTypeFormUrlEncoded = "application/x-www-form-urlen
 inline const std::string kUserAgentPrefix = "iceberg-cpp/";
 inline const std::string kUserAgent = "iceberg-cpp/" ICEBERG_VERSION_STRING;
 
+inline const std::string kHeaderAccessDelegation = "X-Iceberg-Access-Delegation";
+inline const std::string kAccessDelegationVendedCredentials = "vended-credentials";
+
 inline const std::string kQueryParamParent = "parent";
 inline const std::string kQueryParamPageToken = "page_token";
 

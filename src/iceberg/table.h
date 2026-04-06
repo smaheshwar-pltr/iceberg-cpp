@@ -43,11 +43,12 @@ class ICEBERG_EXPORT Table : public std::enable_shared_from_this<Table> {
   /// \param[in] metadata_location The location of the table metadata file.
   /// \param[in] io The FileIO to read and write table data and metadata files.
   /// \param[in] catalog The catalog that this table belongs to.
-  static Result<std::shared_ptr<Table>> Make(TableIdentifier identifier,
-                                             std::shared_ptr<TableMetadata> metadata,
-                                             std::string metadata_location,
-                                             std::shared_ptr<FileIO> io,
-                                             std::shared_ptr<Catalog> catalog);
+  /// \param[in] io_properties Vended credential file IO configuration for client access.
+  static Result<std::shared_ptr<Table>> Make(
+      TableIdentifier identifier, std::shared_ptr<TableMetadata> metadata,
+      std::string metadata_location, std::shared_ptr<FileIO> io,
+      std::shared_ptr<Catalog> catalog,
+      std::unordered_map<std::string, std::string> io_properties = {});
 
   virtual ~Table();
 
@@ -110,6 +111,9 @@ class ICEBERG_EXPORT Table : public std::enable_shared_from_this<Table> {
 
   /// \brief Returns a FileIO to read and write table data and metadata files
   const std::shared_ptr<FileIO>& io() const;
+
+  /// \brief Returns vended credential file IO configuration for client access.
+  const std::unordered_map<std::string, std::string>& io_properties() const;
 
   /// \brief Returns the current metadata for this table
   const std::shared_ptr<TableMetadata>& metadata() const;
@@ -182,7 +186,8 @@ class ICEBERG_EXPORT Table : public std::enable_shared_from_this<Table> {
  protected:
   Table(TableIdentifier identifier, std::shared_ptr<TableMetadata> metadata,
         std::string metadata_location, std::shared_ptr<FileIO> io,
-        std::shared_ptr<Catalog> catalog);
+        std::shared_ptr<Catalog> catalog,
+        std::unordered_map<std::string, std::string> io_properties);
 
   const TableIdentifier identifier_;
   std::shared_ptr<TableMetadata> metadata_;
@@ -190,6 +195,7 @@ class ICEBERG_EXPORT Table : public std::enable_shared_from_this<Table> {
   std::shared_ptr<FileIO> io_;
   std::shared_ptr<Catalog> catalog_;
   std::unique_ptr<class TableMetadataCache> metadata_cache_;
+  std::unordered_map<std::string, std::string> io_properties_;
 };
 
 /// \brief A table created by stage-create and not yet committed.

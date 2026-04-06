@@ -36,6 +36,7 @@
 #include "iceberg/catalog/rest/resource_paths.h"
 #include "iceberg/catalog/rest/rest_util.h"
 #include "iceberg/catalog/rest/types.h"
+#include "iceberg/file_io_registry.h"
 #include "iceberg/json_serde_internal.h"
 #include "iceberg/partition_spec.h"
 #include "iceberg/result.h"
@@ -50,6 +51,27 @@
 namespace iceberg::rest {
 
 namespace {
+
+/// \brief Detect which FileIO implementation to use based on properties.
+///
+/// Resolution order: io-impl property > s3.access-key-id > warehouse URI scheme > local.
+std::string_view DetectFileIOName(
+    const std::unordered_map<std::string, std::string>& properties) {
+  if (auto it = properties.find(std::string(FileIOProperties::kImpl));
+      it != properties.end()) {
+    return it->second;
+  }
+  if (properties.contains("s3.access-key-id")) {
+    return FileIORegistry::kS3;
+  }
+  // Check warehouse URI scheme as fallback (supports default credential chain)
+  if (auto it = properties.find("warehouse"); it != properties.end()) {
+    if (it->second.starts_with("s3://") || it->second.starts_with("s3a://")) {
+      return FileIORegistry::kS3;
+    }
+  }
+  return FileIORegistry::kLocal;
+}
 
 /// \brief Get the default set of endpoints for backwards compatibility according to the
 /// iceberg rest spec.
@@ -172,6 +194,14 @@ Result<std::shared_ptr<RestCatalog>> RestCatalog::Make(
       new RestCatalog(std::move(final_config), std::move(file_io), std::move(client),
                       std::move(paths), std::move(endpoints), std::move(auth_manager),
                       std::move(catalog_session), snapshot_mode));
+}
+
+Result<std::shared_ptr<RestCatalog>> RestCatalog::Make(
+    const RestCatalogProperties& config) {
+  const auto& props = config.configs();
+  ICEBERG_ASSIGN_OR_RAISE(auto file_io,
+                          FileIORegistry::Load(DetectFileIOName(props), props));
+  return Make(config, std::shared_ptr<FileIO>(std::move(file_io)));
 }
 
 RestCatalog::RestCatalog(RestCatalogProperties config, std::shared_ptr<FileIO> file_io,
@@ -354,8 +384,10 @@ Result<std::shared_ptr<Table>> RestCatalog::CreateTable(
   ICEBERG_ASSIGN_OR_RAISE(auto result,
                           CreateTableInternal(identifier, schema, spec, order, location,
                                               properties, /*stage_create=*/false));
+  ICEBERG_ASSIGN_OR_RAISE(auto resolved, ResolveTableFileIO(result));
   return Table::Make(identifier, std::move(result.metadata),
-                     std::move(result.metadata_location), file_io_, shared_from_this());
+                     std::move(result.metadata_location), std::move(resolved.io),
+                     shared_from_this(), std::move(resolved.props));
 }
 
 Result<std::shared_ptr<Table>> RestCatalog::UpdateTable(
@@ -456,20 +488,50 @@ Result<std::string> RestCatalog::LoadTableInternal(
     params["snapshots"] = "all";
   }
 
+  std::unordered_map<std::string, std::string> headers = {
+      {kHeaderAccessDelegation, kAccessDelegationVendedCredentials}};
   ICEBERG_ASSIGN_OR_RAISE(
       const auto response,
-      client_->Get(path, params, /*headers=*/{}, *TableErrorHandler::Instance(),
+      client_->Get(path, params, headers, *TableErrorHandler::Instance(),
                    *catalog_session_));
   return response.body();
+}
+
+Result<RestCatalog::ResolvedTableIO> RestCatalog::ResolveTableFileIO(
+    const LoadTableResult& result) const {
+  // TODO(smaheshwar): Support storage-credentials from the LoadTableResponse. Java and
+  // PyIceberg resolve credentials by longest prefix match on the table's metadata
+  // location. Currently we only use the config field. See also the TODO in types.h.
+  if (result.config.empty()) {
+    return ResolvedTableIO{.io = file_io_, .props = {}};
+  }
+
+  // Merge catalog properties (base) with table config (overrides).
+  auto merged = config_.configs();
+  for (const auto& [k, v] : result.config) {
+    merged[k] = v;
+  }
+
+  auto io_name = DetectFileIOName(merged);
+  if (io_name != FileIORegistry::kLocal) {
+    ICEBERG_ASSIGN_OR_RAISE(auto table_io, FileIORegistry::Load(io_name, merged));
+    return ResolvedTableIO{.io = std::shared_ptr<FileIO>(std::move(table_io)),
+                           .props = std::move(merged)};
+  }
+
+  return ResolvedTableIO{.io = file_io_, .props = std::move(merged)};
 }
 
 Result<std::shared_ptr<Table>> RestCatalog::LoadTable(const TableIdentifier& identifier) {
   ICEBERG_ASSIGN_OR_RAISE(const auto body, LoadTableInternal(identifier));
   ICEBERG_ASSIGN_OR_RAISE(auto json, FromJsonString(body));
   ICEBERG_ASSIGN_OR_RAISE(auto load_result, LoadTableResultFromJson(json));
+
+  ICEBERG_ASSIGN_OR_RAISE(auto resolved, ResolveTableFileIO(load_result));
+
   return Table::Make(identifier, std::move(load_result.metadata),
-                     std::move(load_result.metadata_location), file_io_,
-                     shared_from_this());
+                     std::move(load_result.metadata_location), std::move(resolved.io),
+                     shared_from_this(), std::move(resolved.props));
 }
 
 Result<std::shared_ptr<Table>> RestCatalog::RegisterTable(
@@ -490,9 +552,10 @@ Result<std::shared_ptr<Table>> RestCatalog::RegisterTable(
 
   ICEBERG_ASSIGN_OR_RAISE(auto json, FromJsonString(response.body()));
   ICEBERG_ASSIGN_OR_RAISE(auto load_result, LoadTableResultFromJson(json));
+  ICEBERG_ASSIGN_OR_RAISE(auto resolved, ResolveTableFileIO(load_result));
   return Table::Make(identifier, std::move(load_result.metadata),
-                     std::move(load_result.metadata_location), file_io_,
-                     shared_from_this());
+                     std::move(load_result.metadata_location), std::move(resolved.io),
+                     shared_from_this(), std::move(resolved.props));
 }
 
 }  // namespace iceberg::rest

@@ -50,7 +50,13 @@ namespace {
 Result<std::unique_ptr<AvroOutputStream>> CreateOutputStream(const WriterOptions& options,
                                                              int64_t buffer_size) {
   auto io = internal::checked_pointer_cast<arrow::ArrowFileSystemFileIO>(options.io);
-  ICEBERG_ARROW_ASSIGN_OR_RETURN(auto output, io->fs()->OpenOutputStream(options.path));
+  // TODO(apache/iceberg-cpp#548): Same URI stripping workaround as avro_reader.cc.
+  // See the detailed comment there.
+  std::string resolved_path = options.path;
+  if (auto pos = resolved_path.find("://"); pos != std::string::npos) {
+    resolved_path = resolved_path.substr(pos + 3);
+  }
+  ICEBERG_ARROW_ASSIGN_OR_RETURN(auto output, io->fs()->OpenOutputStream(resolved_path));
   return std::make_unique<AvroOutputStream>(output, buffer_size);
 }
 

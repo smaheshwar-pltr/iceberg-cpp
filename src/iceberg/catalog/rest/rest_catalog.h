@@ -54,6 +54,12 @@ class ICEBERG_REST_EXPORT RestCatalog : public Catalog,
   static Result<std::shared_ptr<RestCatalog>> Make(const RestCatalogProperties& config,
                                                    std::shared_ptr<FileIO> file_io);
 
+  /// \brief Create a RestCatalog that constructs its own FileIO from properties.
+  ///
+  /// \param config the configuration for the RestCatalog, including any file IO
+  ///        connection properties (e.g., credentials, endpoint, region).
+  static Result<std::shared_ptr<RestCatalog>> Make(const RestCatalogProperties& config);
+
   std::string_view name() const override;
 
   Result<std::vector<Namespace>> ListNamespaces(const Namespace& ns) const override;
@@ -113,6 +119,12 @@ class ICEBERG_REST_EXPORT RestCatalog : public Catalog,
               SnapshotMode snapshot_mode);
 
   Result<std::string> LoadTableInternal(const TableIdentifier& identifier) const;
+
+  struct ResolvedTableIO {
+    std::shared_ptr<FileIO> io;
+    std::unordered_map<std::string, std::string> props;
+  };
+  Result<ResolvedTableIO> ResolveTableFileIO(const LoadTableResult& result) const;
 
   Result<LoadTableResult> CreateTableInternal(
       const TableIdentifier& identifier, const std::shared_ptr<Schema>& schema,

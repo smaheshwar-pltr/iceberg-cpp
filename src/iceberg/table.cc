@@ -47,11 +47,11 @@
 
 namespace iceberg {
 
-Result<std::shared_ptr<Table>> Table::Make(TableIdentifier identifier,
-                                           std::shared_ptr<TableMetadata> metadata,
-                                           std::string metadata_location,
-                                           std::shared_ptr<FileIO> io,
-                                           std::shared_ptr<Catalog> catalog) {
+Result<std::shared_ptr<Table>> Table::Make(
+    TableIdentifier identifier, std::shared_ptr<TableMetadata> metadata,
+    std::string metadata_location, std::shared_ptr<FileIO> io,
+    std::shared_ptr<Catalog> catalog,
+    std::unordered_map<std::string, std::string> io_properties) {
   if (metadata == nullptr) [[unlikely]] {
     return InvalidArgument("Metadata cannot be null");
   }
@@ -66,22 +66,28 @@ Result<std::shared_ptr<Table>> Table::Make(TableIdentifier identifier,
   }
   return std::shared_ptr<Table>(new Table(std::move(identifier), std::move(metadata),
                                           std::move(metadata_location), std::move(io),
-                                          std::move(catalog)));
+                                          std::move(catalog), std::move(io_properties)));
 }
 
 Table::~Table() = default;
 
 Table::Table(TableIdentifier identifier, std::shared_ptr<TableMetadata> metadata,
              std::string metadata_location, std::shared_ptr<FileIO> io,
-             std::shared_ptr<Catalog> catalog)
+             std::shared_ptr<Catalog> catalog,
+             std::unordered_map<std::string, std::string> io_properties)
     : identifier_(std::move(identifier)),
       metadata_(std::move(metadata)),
       metadata_location_(std::move(metadata_location)),
       io_(std::move(io)),
       catalog_(std::move(catalog)),
-      metadata_cache_(std::make_unique<TableMetadataCache>(metadata_.get())) {}
+      metadata_cache_(std::make_unique<TableMetadataCache>(metadata_.get())),
+      io_properties_(std::move(io_properties)) {}
 
 const std::string& Table::uuid() const { return metadata_->table_uuid; }
+
+const std::unordered_map<std::string, std::string>& Table::io_properties() const {
+  return io_properties_;
+}
 
 Status Table::Refresh() {
   ICEBERG_ASSIGN_OR_RAISE(auto refreshed_table, catalog_->LoadTable(identifier_));
@@ -89,6 +95,7 @@ Status Table::Refresh() {
     metadata_ = std::move(refreshed_table->metadata_);
     metadata_location_ = std::string(refreshed_table->metadata_file_location());
     io_ = std::move(refreshed_table->io_);
+    io_properties_ = std::move(refreshed_table->io_properties_);
     metadata_cache_ = std::make_unique<TableMetadataCache>(metadata_.get());
   }
   return {};
@@ -248,7 +255,8 @@ Result<std::shared_ptr<StagedTable>> StagedTable::Make(
   }
   return std::shared_ptr<StagedTable>(
       new StagedTable(std::move(identifier), std::move(metadata),
-                      std::move(metadata_location), std::move(io), std::move(catalog)));
+                      std::move(metadata_location), std::move(io), std::move(catalog),
+                      /*io_properties=*/{}));
 }
 
 StagedTable::~StagedTable() = default;
@@ -268,7 +276,8 @@ Result<std::shared_ptr<StaticTable>> StaticTable::Make(
   }
   return std::shared_ptr<StaticTable>(
       new StaticTable(std::move(identifier), std::move(metadata),
-                      std::move(metadata_location), std::move(io), /*catalog=*/nullptr));
+                      std::move(metadata_location), std::move(io), /*catalog=*/nullptr,
+                      /*io_properties=*/{}));
 }
 
 StaticTable::~StaticTable() = default;
