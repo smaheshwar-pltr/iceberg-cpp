@@ -56,6 +56,9 @@ class ICEBERG_REST_EXPORT RestCatalog : public Catalog,
 
   /// \brief Create a RestCatalog that constructs its own FileIO from properties.
   ///
+  /// Requires iceberg::arrow::RegisterFileIO() to have been called first to register
+  /// the built-in FileIO implementations (local, S3).
+  ///
   /// \param config the configuration for the RestCatalog, including any file IO
   ///        connection properties (e.g., credentials, endpoint, region).
   static Result<std::shared_ptr<RestCatalog>> Make(const RestCatalogProperties& config);

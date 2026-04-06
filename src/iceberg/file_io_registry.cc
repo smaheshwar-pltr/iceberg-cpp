@@ -50,7 +50,10 @@ Result<std::unique_ptr<FileIO>> FileIORegistry::Load(
     std::lock_guard lock(RegistryMutex());
     auto it = Registry().find(std::string(name));
     if (it == Registry().end()) {
-      return NotFound("FileIO implementation not registered: {}", name);
+      return NotFound(
+          "FileIO implementation '{}' not registered. "
+          "Call iceberg::arrow::RegisterFileIO() to register built-in implementations.",
+          name);
     }
     factory = it->second;
   }

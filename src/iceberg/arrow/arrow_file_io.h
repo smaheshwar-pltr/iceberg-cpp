@@ -46,12 +46,9 @@ ICEBERG_BUNDLE_EXPORT Result<std::unique_ptr<FileIO>> MakeS3FileIO(
 
 /// \brief Finalize the Arrow S3 subsystem, releasing all resources.
 ///
-/// Safe to call multiple times or if S3 was never initialized (no-op in both cases).
-/// Automatically registered via atexit when S3 is first initialized, so explicit
-/// calls are only needed for earlier cleanup (e.g., extension unload).
-///
-/// Note: this is a one-way operation. After calling FinalizeS3(), the S3 subsystem
-/// cannot be re-initialized in this process. Any subsequent MakeS3FileIO() calls
+/// Must be called before process exit or extension unload to avoid shutdown crashes
+/// from static destruction order issues in the AWS SDK. Safe to call if S3 was never
+/// initialized (no-op). This is a one-way operation -- subsequent MakeS3FileIO() calls
 /// will fail.
 ICEBERG_BUNDLE_EXPORT Status FinalizeS3();
 

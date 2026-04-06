@@ -22,7 +22,6 @@
 
 #ifdef ICEBERG_S3_ENABLED
 
-#  include <cstdlib>
 #  include <mutex>
 
 #  include <arrow/filesystem/s3fs.h>
@@ -37,26 +36,12 @@ namespace iceberg::arrow {
 namespace {
 
 std::once_flag g_s3_init_flag;
-bool g_s3_initialized = false;
-
-void FinalizeS3Atexit() {
-  if (g_s3_initialized) {
-    auto status = ::arrow::fs::FinalizeS3();
-    g_s3_initialized = false;
-    // Best-effort: nothing useful to do with errors at exit
-    (void)status;
-  }
-}
 
 Status EnsureS3Initialized() {
   static ::arrow::Status init_status;
   std::call_once(g_s3_init_flag, [] {
     // TODO(smaheshwar): support options from ::arrow::fs::S3GlobalOptions when needed
     init_status = ::arrow::fs::EnsureS3Initialized();
-    if (init_status.ok()) {
-      g_s3_initialized = true;
-      std::atexit(FinalizeS3Atexit);
-    }
   });
   if (!init_status.ok()) {
     return IOError("Arrow S3 initialization failed: {}", init_status.ToString());
@@ -115,7 +100,10 @@ Result<::arrow::fs::S3Options> ConfigureS3Options(
 }  // namespace
 
 Status FinalizeS3() {
-  FinalizeS3Atexit();
+  auto status = ::arrow::fs::FinalizeS3();
+  if (!status.ok()) {
+    return IOError("Arrow S3 finalization failed: {}", status.ToString());
+  }
   return {};
 }
 
