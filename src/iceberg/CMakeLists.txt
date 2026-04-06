@@ -43,6 +43,7 @@ set(ICEBERG_SOURCES
     expression/rewrite_not.cc
     expression/strict_metrics_evaluator.cc
     expression/term.cc
+    file_io_registry.cc
     file_reader.cc
     file_writer.cc
     inheritable_metadata.cc
@@ -197,6 +198,8 @@ if(ICEBERG_BUILD_BUNDLE)
       parquet/parquet_schema_util.cc
       parquet/parquet_writer.cc)
 
+  list(APPEND ICEBERG_BUNDLE_SOURCES arrow/arrow_s3_file_io.cc arrow/file_io_register.cc)
+
   # Libraries to link with exported libiceberg_bundle.{so,a}.
   set(ICEBERG_BUNDLE_STATIC_BUILD_INTERFACE_LIBS)
   set(ICEBERG_BUNDLE_SHARED_BUILD_INTERFACE_LIBS)
@@ -246,6 +249,12 @@ if(ICEBERG_BUILD_BUNDLE)
                   ${ICEBERG_BUNDLE_SHARED_INSTALL_INTERFACE_LIBS}
                   OUTPUTS
                   ICEBERG_BUNDLE_LIBRARIES)
+
+  if(ICEBERG_S3)
+    foreach(LIB ${ICEBERG_BUNDLE_LIBRARIES})
+      target_compile_definitions(${LIB} PRIVATE ICEBERG_S3_ENABLED)
+    endforeach()
+  endif()
 
   add_subdirectory(arrow)
   add_subdirectory(avro)
