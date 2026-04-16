@@ -23,7 +23,6 @@
 
 #include <arrow/array/builder_base.h>
 #include <arrow/c/bridge.h>
-#include <arrow/filesystem/filesystem.h>
 #include <arrow/record_batch.h>
 #include <arrow/result.h>
 #include <arrow/type.h>
@@ -51,25 +50,8 @@ namespace {
 
 Result<std::unique_ptr<AvroInputStream>> CreateInputStream(const ReaderOptions& options,
                                                            int64_t buffer_size) {
-  // TODO(apache/iceberg-cpp#548): The Avro reader bypasses FileIO::ReadFile and calls
-  // io->fs()->OpenInputFile() directly, which bypasses
-  // ArrowFileSystemFileIO::ResolvePath. This means S3 URIs ("s3://bucket/key") are passed
-  // directly to Arrow's S3FileSystem, which expects bare paths ("bucket/key"). This
-  // manual stripping here is a workaround; the proper fix is to either:
-  //   (a) Route all I/O through FileIO::ReadFile (so ResolvePath is always applied), or
-  //   (b) Move URI resolution into the Arrow filesystem wrapper itself.
-  // See also: the same issue in avro_writer.cc.
-  std::string resolved_path = options.path;
-  if (auto pos = resolved_path.find("://"); pos != std::string::npos) {
-    resolved_path = resolved_path.substr(pos + 3);
-  }
-  ::arrow::fs::FileInfo file_info(resolved_path, ::arrow::fs::FileType::File);
-  if (options.length) {
-    file_info.set_size(options.length.value());
-  }
-
   auto io = internal::checked_pointer_cast<arrow::ArrowFileSystemFileIO>(options.io);
-  ICEBERG_ARROW_ASSIGN_OR_RETURN(auto file, io->fs()->OpenInputFile(file_info));
+  ICEBERG_ASSIGN_OR_RAISE(auto file, io->OpenInputFile(options.path, options.length));
   return std::make_unique<AvroInputStream>(file, buffer_size);
 }
 
