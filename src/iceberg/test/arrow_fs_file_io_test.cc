@@ -77,7 +77,8 @@ class MockFileIOTest : public ::testing::Test {
     auto mock_fs = std::make_shared<::arrow::fs::internal::MockFileSystem>(
         std::chrono::system_clock::now());
     mock_fs_ = mock_fs.get();
-    file_io_ = std::make_unique<iceberg::arrow::ArrowFileSystemFileIO>(std::move(mock_fs));
+    file_io_ =
+        std::make_unique<iceberg::arrow::ArrowFileSystemFileIO>(std::move(mock_fs));
   }
 
   /// \brief Helper to create a file in the mock filesystem with recursive directory
@@ -182,7 +183,8 @@ TEST_F(MockFileIOTest, OpenInputFileWithLengthHint) {
 
 TEST_F(MockFileIOTest, RoundTripViaOpenOutputStreamAndOpenInputFile) {
   // Write via OpenOutputStream with URI scheme.
-  const std::string test_data = "round trip test data with special chars: \xc3\xa9\xc3\xa0";
+  const std::string test_data =
+      "round trip test data with special chars: \xc3\xa9\xc3\xa0";
   {
     auto out_result = file_io_->OpenOutputStream("mock:///data.bin");
     EXPECT_THAT(out_result, IsOk());
@@ -259,6 +261,9 @@ class LocalFileIOURITest : public TempFileTestBase {
 };
 
 TEST_F(LocalFileIOURITest, OpenOutputStreamWithFileScheme) {
+#ifdef _WIN32
+  GTEST_SKIP() << "file:// URI test uses Unix paths";
+#endif
   // Write using file:// URI.
   std::string file_uri = "file://" + temp_filepath_;
   auto out_result = file_io_->OpenOutputStream(file_uri);
@@ -277,6 +282,9 @@ TEST_F(LocalFileIOURITest, OpenOutputStreamWithFileScheme) {
 }
 
 TEST_F(LocalFileIOURITest, OpenInputFileWithFileScheme) {
+#ifdef _WIN32
+  GTEST_SKIP() << "file:// URI test uses Unix paths";
+#endif
   // Write using plain path.
   auto write_res = file_io_->WriteFile(temp_filepath_, "file input data");
   EXPECT_THAT(write_res, IsOk());
