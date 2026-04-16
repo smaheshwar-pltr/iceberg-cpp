@@ -165,6 +165,13 @@ function(resolve_arrow_dependency)
       install(FILES ${arrow_bundled_dependencies_location}
               DESTINATION ${ICEBERG_INSTALL_LIBDIR})
     endif()
+
+    # Arrow's exported static target interface may reference system libraries
+    # (e.g. OpenSSL, CURL, ZLIB) that consumers need to find.
+    list(APPEND ICEBERG_SYSTEM_DEPENDENCIES ZLIB)
+    if(ARROW_S3)
+      list(APPEND ICEBERG_SYSTEM_DEPENDENCIES OpenSSL CURL)
+    endif()
   else()
     set(ARROW_VENDORED FALSE)
     find_package(Arrow CONFIG REQUIRED)

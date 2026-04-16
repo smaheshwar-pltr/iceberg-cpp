@@ -30,10 +30,6 @@
 
 namespace iceberg::rest {
 
-namespace {
-const std::string kNamespaceEscapeSeparator = "%1F";
-}
-
 std::string_view TrimTrailingSlash(std::string_view str) {
   while (!str.empty() && str.back() == '/') {
     str.remove_suffix(1);
@@ -69,7 +65,8 @@ Result<std::string> DecodeString(std::string_view str_to_decode) {
   return std::string{decoded.data(), decoded.size()};
 }
 
-Result<std::string> EncodeNamespace(const Namespace& ns_to_encode) {
+Result<std::string> EncodeNamespace(const Namespace& ns_to_encode,
+                                    std::string_view separator) {
   if (ns_to_encode.levels.empty()) {
     return "";
   }
@@ -79,28 +76,29 @@ Result<std::string> EncodeNamespace(const Namespace& ns_to_encode) {
   for (size_t i = 1; i < ns_to_encode.levels.size(); ++i) {
     ICEBERG_ASSIGN_OR_RAISE(std::string encoded_level,
                             EncodeString(ns_to_encode.levels[i]));
-    result.append(kNamespaceEscapeSeparator);
+    result.append(separator);
     result.append(std::move(encoded_level));
   }
 
   return result;
 }
 
-Result<Namespace> DecodeNamespace(std::string_view str_to_decode) {
+Result<Namespace> DecodeNamespace(std::string_view str_to_decode,
+                                  std::string_view separator) {
   if (str_to_decode.empty()) {
     return Namespace{.levels = {}};
   }
 
   Namespace ns{};
   std::string::size_type start = 0;
-  std::string::size_type end = str_to_decode.find(kNamespaceEscapeSeparator);
+  std::string::size_type end = str_to_decode.find(separator);
 
   while (end != std::string::npos) {
     ICEBERG_ASSIGN_OR_RAISE(std::string decoded_level,
                             DecodeString(str_to_decode.substr(start, end - start)));
     ns.levels.push_back(std::move(decoded_level));
-    start = end + kNamespaceEscapeSeparator.size();
-    end = str_to_decode.find(kNamespaceEscapeSeparator, start);
+    start = end + separator.size();
+    end = str_to_decode.find(separator, start);
   }
 
   ICEBERG_ASSIGN_OR_RAISE(std::string decoded_level,

@@ -39,9 +39,11 @@ class ICEBERG_REST_EXPORT ResourcePaths {
   /// \brief Construct a ResourcePaths with base URI and optional prefix.
   /// \param base_uri The base URI of the REST catalog server (without trailing slash)
   /// \param prefix Optional prefix for REST API paths (default: empty)
+  /// \param namespace_separator Encoded separator used between namespace levels.
   /// \return A unique_ptr to ResourcePaths instance
-  static Result<std::unique_ptr<ResourcePaths>> Make(std::string base_uri,
-                                                     const std::string& prefix);
+  static Result<std::unique_ptr<ResourcePaths>> Make(
+      std::string base_uri, const std::string& prefix,
+      const std::string& namespace_separator);
 
   /// \brief Get the /v1/config endpoint path.
   Result<std::string> Config() const;
@@ -82,10 +84,12 @@ class ICEBERG_REST_EXPORT ResourcePaths {
   Result<std::string> CommitTransaction() const;
 
  private:
-  ResourcePaths(std::string base_uri, const std::string& prefix);
+  ResourcePaths(std::string base_uri, const std::string& prefix,
+                std::string namespace_separator);
 
   std::string base_uri_;      // required
   const std::string prefix_;  // optional
+  const std::string namespace_separator_;
 };
 
 }  // namespace iceberg::rest

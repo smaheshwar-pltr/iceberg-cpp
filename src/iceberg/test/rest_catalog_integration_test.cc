@@ -39,6 +39,7 @@
 #include "iceberg/catalog/rest/http_client.h"
 #include "iceberg/catalog/rest/json_serde_internal.h"
 #include "iceberg/catalog/rest/rest_catalog.h"
+#include "iceberg/file_io_registry.h"
 #include "iceberg/partition_spec.h"
 #include "iceberg/result.h"
 #include "iceberg/schema.h"
@@ -65,6 +66,7 @@ constexpr std::string_view kDockerProjectName = "iceberg-rest-catalog-service";
 constexpr std::string_view kCatalogName = "test_catalog";
 constexpr std::string_view kWarehouseName = "default";
 constexpr std::string_view kLocalhostUri = "http://localhost";
+constexpr std::string_view kStdFileIOImpl = "test.StdFileIO";
 
 /// \brief Check if a localhost port is ready to accept connections.
 bool CheckServiceReady(uint16_t port) {
@@ -96,6 +98,12 @@ std::string CatalogUri() { return std::format("{}:{}", kLocalhostUri, kRestCatal
 class RestCatalogIntegrationTest : public ::testing::Test {
  protected:
   static void SetUpTestSuite() {
+    FileIORegistry::Register(
+        std::string(kStdFileIOImpl),
+        [](const std::unordered_map<std::string, std::string>& /*properties*/)
+            -> Result<std::unique_ptr<FileIO>> {
+          return std::make_unique<test::StdFileIO>();
+        });
     docker_compose_ = std::make_unique<DockerCompose>(
         std::string{kDockerProjectName}, GetResourcePath("iceberg-rest-fixture"));
     docker_compose_->Up();
@@ -126,10 +134,12 @@ class RestCatalogIntegrationTest : public ::testing::Test {
     config.Set(RestCatalogProperties::kUri, CatalogUri())
         .Set(RestCatalogProperties::kName, std::string(kCatalogName))
         .Set(RestCatalogProperties::kWarehouse, std::string(kWarehouseName));
+    config.mutable_configs()[std::string(RestCatalogProperties::kIOImpl.key())] =
+        std::string(kStdFileIOImpl);
     for (const auto& [k, v] : extra) {
       config.mutable_configs()[k] = v;
     }
-    return RestCatalog::Make(config, std::make_shared<test::StdFileIO>());
+    return RestCatalog::Make(config);
   }
 
   /// Create a catalog configured with a specific snapshot loading mode.

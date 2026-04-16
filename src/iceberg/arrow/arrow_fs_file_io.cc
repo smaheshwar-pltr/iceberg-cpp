@@ -30,11 +30,9 @@
 namespace iceberg::arrow {
 
 Result<std::string> ArrowFileSystemFileIO::ResolvePath(const std::string& file_location) {
-  // Arrow's S3FileSystem expects paths as "bucket/key", not "s3://bucket/key".
-  // Strip the scheme if present so the filesystem receives a bare path.
-  static constexpr std::string_view kSchemeDelimiter = "://";
-  if (auto pos = file_location.find(kSchemeDelimiter); pos != std::string::npos) {
-    return file_location.substr(pos + kSchemeDelimiter.size());
+  if (file_location.find("://") != std::string::npos) {
+    ICEBERG_ARROW_ASSIGN_OR_RETURN(auto path, arrow_fs_->PathFromUri(file_location));
+    return path;
   }
   return file_location;
 }

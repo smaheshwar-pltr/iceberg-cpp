@@ -35,21 +35,19 @@ ICEBERG_BUNDLE_EXPORT std::unique_ptr<FileIO> MakeLocalFileIO();
 
 /// \brief Create an S3 FileIO backed by Arrow's S3FileSystem.
 ///
-/// Thread-safe: initializes the Arrow S3 subsystem on first call via std::once_flag.
+/// This function initializes the S3 subsystem if not already initialized (thread-safe).
+/// The S3 initialization is cached once per process.
 ///
-/// \param properties S3 configuration properties. See S3Properties for available keys
-///        (credentials, region, endpoint, path-style, SSL, etc.). If credentials are not
-///        provided, falls back to the default AWS credential chain.
-/// \return A FileIO instance for S3 operations, or an error if initialization fails.
+/// \param properties Configuration properties for S3 access. See S3Properties
+///        for available keys (credentials, region, endpoint, timeouts, etc.).
+/// \return A FileIO instance for S3 operations, or an error if S3 is not supported.
 ICEBERG_BUNDLE_EXPORT Result<std::unique_ptr<FileIO>> MakeS3FileIO(
-    const std::unordered_map<std::string, std::string>& properties);
+    const std::unordered_map<std::string, std::string>& properties = {});
 
-/// \brief Finalize the Arrow S3 subsystem, releasing all resources.
+/// \brief Finalize (clean up) the Arrow S3 subsystem.
 ///
-/// Must be called before process exit or extension unload to avoid shutdown crashes
-/// from static destruction order issues in the AWS SDK. Safe to call if S3 was never
-/// initialized (no-op). This is a one-way operation -- subsequent MakeS3FileIO() calls
-/// will fail.
+/// Must be called before process exit if S3 was initialized, otherwise Arrow's
+/// static destructors may cause a non-zero exit.
 ICEBERG_BUNDLE_EXPORT Status FinalizeS3();
 
 }  // namespace iceberg::arrow

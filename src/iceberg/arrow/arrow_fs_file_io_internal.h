@@ -57,15 +57,6 @@ class ICEBERG_BUNDLE_EXPORT ArrowFileSystemFileIO : public FileIO {
 
  private:
   /// \brief Resolve a file location to a filesystem path.
-  ///
-  /// If the location contains a URI scheme (e.g., "s3://bucket/key"), strips
-  /// the scheme to produce a bare path ("bucket/key") that Arrow's S3FileSystem
-  /// expects. Returns the location unchanged if no scheme is present.
-  ///
-  /// TODO(apache/iceberg-cpp#548): This only applies when called through
-  /// FileIO::ReadFile/WriteFile/DeleteFile. The Avro reader/writer bypass FileIO
-  /// and call fs()->OpenInputFile() directly, requiring separate URI stripping.
-  /// See avro_reader.cc and avro_writer.cc for the workaround.
   Result<std::string> ResolvePath(const std::string& file_location);
 
   std::shared_ptr<::arrow::fs::FileSystem> arrow_fs_;

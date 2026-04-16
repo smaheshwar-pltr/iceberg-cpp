@@ -67,6 +67,8 @@ set(ICEBERG_SOURCES
     partition_spec.cc
     partition_summary.cc
     puffin/file_metadata.cc
+    puffin/puffin_format.cc
+    puffin/json_serde.cc
     row/arrow_array_wrapper.cc
     row/manifest_wrapper.cc
     row/partition_values.cc
@@ -182,6 +184,8 @@ add_subdirectory(util)
 if(ICEBERG_BUILD_BUNDLE)
   set(ICEBERG_BUNDLE_SOURCES
       arrow/arrow_fs_file_io.cc
+      arrow/s3/arrow_s3_file_io.cc
+      arrow/file_io_register.cc
       arrow/metadata_column_util.cc
       avro/avro_data_util.cc
       avro/avro_direct_decoder.cc
@@ -197,8 +201,6 @@ if(ICEBERG_BUILD_BUNDLE)
       parquet/parquet_register.cc
       parquet/parquet_schema_util.cc
       parquet/parquet_writer.cc)
-
-  list(APPEND ICEBERG_BUNDLE_SOURCES arrow/arrow_s3_file_io.cc arrow/file_io_register.cc)
 
   # Libraries to link with exported libiceberg_bundle.{so,a}.
   set(ICEBERG_BUNDLE_STATIC_BUILD_INTERFACE_LIBS)
@@ -250,11 +252,17 @@ if(ICEBERG_BUILD_BUNDLE)
                   OUTPUTS
                   ICEBERG_BUNDLE_LIBRARIES)
 
-  if(ICEBERG_S3)
-    foreach(LIB ${ICEBERG_BUNDLE_LIBRARIES})
-      target_compile_definitions(${LIB} PRIVATE ICEBERG_S3_ENABLED)
-    endforeach()
-  endif()
+  foreach(target iceberg_bundle_static iceberg_bundle_shared)
+    if(TARGET ${target})
+      if(ICEBERG_S3)
+        target_compile_definitions(${target}
+                                   PUBLIC "$<BUILD_INTERFACE:ICEBERG_S3_ENABLED=1>")
+      else()
+        target_compile_definitions(${target}
+                                   PUBLIC "$<BUILD_INTERFACE:ICEBERG_S3_ENABLED=0>")
+      endif()
+    endif()
+  endforeach()
 
   add_subdirectory(arrow)
   add_subdirectory(avro)

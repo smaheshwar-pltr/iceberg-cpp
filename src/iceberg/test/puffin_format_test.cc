@@ -17,18 +17,21 @@
  * under the License.
  */
 
-#pragma once
+#include "iceberg/puffin/puffin_format.h"
 
-/// \file iceberg/arrow/file_io_register.h
-/// \brief Provide functions to register Arrow FileIO implementations.
+#include <array>
+#include <cstdint>
 
-#include "iceberg/iceberg_bundle_export.h"
+#include <gtest/gtest.h>
 
-namespace iceberg::arrow {
+namespace iceberg::puffin {
 
-/// \brief Register built-in Arrow FileIO implementations into the FileIORegistry.
-///
-/// This operation is idempotent and safe to call multiple times.
-ICEBERG_BUNDLE_EXPORT void EnsureArrowFileIOsRegistered();
+TEST(PuffinFormatTest, FlagSetAndCheck) {
+  std::array<uint8_t, 4> flags{};
+  EXPECT_FALSE(IsFlagSet(flags, PuffinFlag::kFooterPayloadCompressed));
 
-}  // namespace iceberg::arrow
+  SetFlag(flags, PuffinFlag::kFooterPayloadCompressed);
+  EXPECT_TRUE(IsFlagSet(flags, PuffinFlag::kFooterPayloadCompressed));
+}
+
+}  // namespace iceberg::puffin

@@ -74,6 +74,15 @@ TEST(RestUtilTest, RoundTripUrlEncodeDecodeNamespace) {
   EXPECT_THAT(DecodeNamespace(""), HasValue(::testing::Eq(Namespace{.levels = {}})));
 }
 
+TEST(RestUtilTest, RoundTripNamespaceWithCustomSeparator) {
+  Namespace ns{.levels = {"dogs.and.cats", "named", "hank.or.james-westfall"}};
+
+  EXPECT_THAT(EncodeNamespace(ns, "%2E"),
+              HasValue(::testing::Eq("dogs.and.cats%2Enamed%2Ehank.or.james-westfall")));
+  EXPECT_THAT(DecodeNamespace("dogs.and.cats%2Enamed%2Ehank.or.james-westfall", "%2E"),
+              HasValue(::testing::Eq(ns)));
+}
+
 TEST(RestUtilTest, EncodeString) {
   // RFC 3986 unreserved characters should not be encoded
   EXPECT_THAT(EncodeString("abc123XYZ"), HasValue(::testing::Eq("abc123XYZ")));

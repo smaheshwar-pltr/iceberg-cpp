@@ -46,21 +46,7 @@ class ICEBERG_REST_EXPORT RestCatalog : public Catalog,
   RestCatalog(RestCatalog&&) = delete;
   RestCatalog& operator=(RestCatalog&&) = delete;
 
-  /// \brief Create a RestCatalog instance
-  ///
-  /// \param config the configuration for the RestCatalog
-  /// \param file_io the FileIO instance to use for table operations
-  /// \return a shared_ptr to RestCatalog instance
-  static Result<std::shared_ptr<RestCatalog>> Make(const RestCatalogProperties& config,
-                                                   std::shared_ptr<FileIO> file_io);
-
-  /// \brief Create a RestCatalog that constructs its own FileIO from properties.
-  ///
-  /// Requires iceberg::arrow::RegisterFileIO() to have been called first to register
-  /// the built-in FileIO implementations (local, S3).
-  ///
-  /// \param config the configuration for the RestCatalog, including any file IO
-  ///        connection properties (e.g., credentials, endpoint, region).
+  /// \brief Create a RestCatalog instance.
   static Result<std::shared_ptr<RestCatalog>> Make(const RestCatalogProperties& config);
 
   std::string_view name() const override;

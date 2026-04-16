@@ -1,3 +1,4 @@
+#
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -14,26 +15,32 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+#
 
-name: "Run License Check"
+# Verifies all GitHub Actions refs are on the ASF allowlist.
+# Actions not on the allowlist silently fail with "Startup failure" — no logs,
+# no notifications, and PRs may appear green because no checks ran.
+# See https://github.com/apache/infrastructure-actions/issues/574
+name: "ASF Allowlist Check"
 
-on: pull_request
+on:
+  pull_request:
+    paths:
+      - ".github/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/**"
 
 permissions:
   contents: read
 
 jobs:
-  license-check:
-    name: "License Check"
-    runs-on: ubuntu-slim
+  asf-allowlist-check:
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          persist-credentials: false
-      - name: Check license header
-        uses: apache/skywalking-eyes@61275cc80d0798a405cb070f7d3a8aaf7cf2c2c1 # v0.8.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          config: .github/.licenserc.yaml
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        persist-credentials: false
+    - uses: apache/infrastructure-actions/allowlist-check@4e9c961f587f72b170874b6f5cd4ac15f7f26eb8  # main

@@ -69,6 +69,12 @@ if(ICEBERG_BUILD_REST_INTEGRATION_TESTS AND WIN32)
   message(WARNING "Cannot build rest integration test on Windows, turning it off.")
 endif()
 
+# ICEBERG_S3 requires ICEBERG_BUILD_BUNDLE
+if(NOT ICEBERG_BUILD_BUNDLE AND ICEBERG_S3)
+  set(ICEBERG_S3 OFF)
+  message(STATUS "ICEBERG_S3 is disabled because ICEBERG_BUILD_BUNDLE is OFF")
+endif()
+
 include(CMakeParseArguments)
 include(IcebergBuildUtils)
 include(IcebergSanitizer)

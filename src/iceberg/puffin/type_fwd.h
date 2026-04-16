@@ -19,19 +19,12 @@
 
 #pragma once
 
-#include <string_view>
+/// \file iceberg/puffin/type_fwd.h
+/// Forward declarations for Puffin types.
 
-namespace iceberg::arrow {
+namespace iceberg::puffin {
 
-/// \brief Iceberg S3 file IO property keys.
-struct S3Properties {
-  static constexpr std::string_view kAccessKeyId = "s3.access-key-id";
-  static constexpr std::string_view kSecretAccessKey = "s3.secret-access-key";
-  static constexpr std::string_view kSessionToken = "s3.session-token";
-  static constexpr std::string_view kRegion = "s3.region";
-  static constexpr std::string_view kEndpoint = "s3.endpoint";
-  static constexpr std::string_view kPathStyleAccess = "s3.path-style-access";
-  static constexpr std::string_view kSslEnabled = "s3.ssl.enabled";
-};
+struct BlobMetadata;
+struct FileMetadata;
 
-}  // namespace iceberg::arrow
+}  // namespace iceberg::puffin

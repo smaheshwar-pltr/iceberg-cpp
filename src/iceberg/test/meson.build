@@ -102,6 +102,9 @@ iceberg_tests = {
         ),
     },
     'roaring_test': {'sources': files('roaring_test.cc')},
+    'puffin_test': {
+        'sources': files('puffin_format_test.cc', 'puffin_json_test.cc'),
+    },
 }
 
 if get_option('rest').enabled()
@@ -110,6 +113,7 @@ if get_option('rest').enabled()
             'sources': files(
                 'auth_manager_test.cc',
                 'endpoint_test.cc',
+                'rest_file_io_test.cc',
                 'rest_json_serde_test.cc',
                 'rest_util_test.cc',
             ),

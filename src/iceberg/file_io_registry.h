@@ -38,25 +38,27 @@ namespace iceberg {
 /// at runtime based on configuration properties like "io-impl".
 class ICEBERG_EXPORT FileIORegistry {
  public:
-  static constexpr std::string_view kLocal = "local";
-  static constexpr std::string_view kS3 = "s3";
+  static constexpr std::string_view kArrowLocalFileIO = "arrow-fs-local";
+  static constexpr std::string_view kArrowS3FileIO = "arrow-fs-s3";
 
   /// Factory function type for creating FileIO instances.
   using Factory = std::function<Result<std::unique_ptr<FileIO>>(
       const std::unordered_map<std::string, std::string>& properties)>;
 
   /// \brief Register a FileIO factory under the given name.
-  static void Register(std::string_view name, Factory factory);
+  ///
+  /// \param name The implementation name (e.g., "local", "s3")
+  /// \param factory The factory function that creates the FileIO instance.
+  static void Register(const std::string& name, Factory factory);
 
   /// \brief Load a FileIO implementation by name.
+  ///
+  /// \param name The implementation name to look up.
+  /// \param properties Configuration properties to pass to the factory.
+  /// \return A unique_ptr to the FileIO instance, or an error if not found.
   static Result<std::unique_ptr<FileIO>> Load(
-      std::string_view name,
+      const std::string& name,
       const std::unordered_map<std::string, std::string>& properties);
-};
-
-/// \brief Property keys for FileIO configuration.
-struct FileIOProperties {
-  static constexpr std::string_view kImpl = "io-impl";
 };
 
 }  // namespace iceberg

@@ -27,16 +27,21 @@
 
 namespace iceberg::rest {
 
-Result<std::unique_ptr<ResourcePaths>> ResourcePaths::Make(std::string base_uri,
-                                                           const std::string& prefix) {
+Result<std::unique_ptr<ResourcePaths>> ResourcePaths::Make(
+    std::string base_uri, const std::string& prefix,
+    const std::string& namespace_separator) {
   if (base_uri.empty()) {
     return InvalidArgument("Base URI is empty");
   }
-  return std::unique_ptr<ResourcePaths>(new ResourcePaths(std::move(base_uri), prefix));
+  return std::unique_ptr<ResourcePaths>(
+      new ResourcePaths(std::move(base_uri), prefix, namespace_separator));
 }
 
-ResourcePaths::ResourcePaths(std::string base_uri, const std::string& prefix)
-    : base_uri_(std::move(base_uri)), prefix_(prefix.empty() ? "" : (prefix + "/")) {}
+ResourcePaths::ResourcePaths(std::string base_uri, const std::string& prefix,
+                             std::string namespace_separator)
+    : base_uri_(std::move(base_uri)),
+      prefix_(prefix.empty() ? "" : (prefix + "/")),
+      namespace_separator_(std::move(namespace_separator)) {}
 
 Result<std::string> ResourcePaths::Config() const {
   return std::format("{}/v1/config", base_uri_);
@@ -51,31 +56,36 @@ Result<std::string> ResourcePaths::Namespaces() const {
 }
 
 Result<std::string> ResourcePaths::Namespace_(const Namespace& ns) const {
-  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace, EncodeNamespace(ns));
+  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace,
+                          EncodeNamespace(ns, namespace_separator_));
   return std::format("{}/v1/{}namespaces/{}", base_uri_, prefix_, encoded_namespace);
 }
 
 Result<std::string> ResourcePaths::NamespaceProperties(const Namespace& ns) const {
-  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace, EncodeNamespace(ns));
+  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace,
+                          EncodeNamespace(ns, namespace_separator_));
   return std::format("{}/v1/{}namespaces/{}/properties", base_uri_, prefix_,
                      encoded_namespace);
 }
 
 Result<std::string> ResourcePaths::Tables(const Namespace& ns) const {
-  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace, EncodeNamespace(ns));
+  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace,
+                          EncodeNamespace(ns, namespace_separator_));
   return std::format("{}/v1/{}namespaces/{}/tables", base_uri_, prefix_,
                      encoded_namespace);
 }
 
 Result<std::string> ResourcePaths::Table(const TableIdentifier& ident) const {
-  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace, EncodeNamespace(ident.ns));
+  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace,
+                          EncodeNamespace(ident.ns, namespace_separator_));
   ICEBERG_ASSIGN_OR_RAISE(std::string encoded_table_name, EncodeString(ident.name));
   return std::format("{}/v1/{}namespaces/{}/tables/{}", base_uri_, prefix_,
                      encoded_namespace, encoded_table_name);
 }
 
 Result<std::string> ResourcePaths::Register(const Namespace& ns) const {
-  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace, EncodeNamespace(ns));
+  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace,
+                          EncodeNamespace(ns, namespace_separator_));
   return std::format("{}/v1/{}namespaces/{}/register", base_uri_, prefix_,
                      encoded_namespace);
 }
@@ -85,14 +95,16 @@ Result<std::string> ResourcePaths::Rename() const {
 }
 
 Result<std::string> ResourcePaths::Metrics(const TableIdentifier& ident) const {
-  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace, EncodeNamespace(ident.ns));
+  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace,
+                          EncodeNamespace(ident.ns, namespace_separator_));
   ICEBERG_ASSIGN_OR_RAISE(std::string encoded_table_name, EncodeString(ident.name));
   return std::format("{}/v1/{}namespaces/{}/tables/{}/metrics", base_uri_, prefix_,
                      encoded_namespace, encoded_table_name);
 }
 
 Result<std::string> ResourcePaths::Credentials(const TableIdentifier& ident) const {
-  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace, EncodeNamespace(ident.ns));
+  ICEBERG_ASSIGN_OR_RAISE(std::string encoded_namespace,
+                          EncodeNamespace(ident.ns, namespace_separator_));
   ICEBERG_ASSIGN_OR_RAISE(std::string encoded_table_name, EncodeString(ident.name));
   return std::format("{}/v1/{}namespaces/{}/tables/{}/credentials", base_uri_, prefix_,
                      encoded_namespace, encoded_table_name);

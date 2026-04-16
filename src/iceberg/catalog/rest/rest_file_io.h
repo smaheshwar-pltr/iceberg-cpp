@@ -19,16 +19,29 @@
 
 #pragma once
 
-/// \file iceberg/arrow/file_io_register.h
-/// \brief Provide functions to register Arrow FileIO implementations.
+#include <cstdint>
+#include <memory>
+#include <string_view>
 
-#include "iceberg/iceberg_bundle_export.h"
+#include "iceberg/catalog/rest/catalog_properties.h"
+#include "iceberg/catalog/rest/iceberg_rest_export.h"
+#include "iceberg/file_io.h"
+#include "iceberg/file_io_registry.h"
+#include "iceberg/result.h"
 
-namespace iceberg::arrow {
+namespace iceberg::rest {
 
-/// \brief Register built-in Arrow FileIO implementations into the FileIORegistry.
-///
-/// This operation is idempotent and safe to call multiple times.
-ICEBERG_BUNDLE_EXPORT void EnsureArrowFileIOsRegistered();
+enum class BuiltinFileIOKind : uint8_t {
+  kArrowLocal,
+  kArrowS3,
+};
 
-}  // namespace iceberg::arrow
+ICEBERG_REST_EXPORT Result<BuiltinFileIOKind> DetectBuiltinFileIO(
+    std::string_view location);
+
+ICEBERG_REST_EXPORT std::string_view BuiltinFileIOName(BuiltinFileIOKind kind);
+
+ICEBERG_REST_EXPORT Result<std::unique_ptr<FileIO>> MakeCatalogFileIO(
+    const RestCatalogProperties& config);
+
+}  // namespace iceberg::rest

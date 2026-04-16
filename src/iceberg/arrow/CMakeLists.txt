@@ -16,3 +16,5 @@
 # under the License.
 
 iceberg_install_all_headers(iceberg/arrow)
+
+add_subdirectory(s3)

@@ -58,18 +58,23 @@ ICEBERG_REST_EXPORT Result<std::string> DecodeString(std::string_view str_to_dec
 
 /// \brief Encode a Namespace into a URL-safe component.
 ///
-/// \details Encodes each level separately using EncodeString, then joins them with "%1F".
+/// \details Encodes each level separately using EncodeString, then joins them with the
+/// provided separator. The default matches the REST spec's historical "%1F".
 /// \param ns_to_encode The namespace to encode.
+/// \param separator The encoded separator to place between namespace levels.
 /// \return The percent-encoded namespace string suitable for URLs.
-ICEBERG_REST_EXPORT Result<std::string> EncodeNamespace(const Namespace& ns_to_encode);
+ICEBERG_REST_EXPORT Result<std::string> EncodeNamespace(
+    const Namespace& ns_to_encode, std::string_view separator = "%1F");
 
 /// \brief Decode a URL-encoded namespace string back to a Namespace.
 ///
-/// \details Splits by "%1F" (the URL-encoded form of ASCII Unit Separator), then decodes
-/// each level separately using DecodeString.
+/// \details Splits by the provided separator, then decodes each level separately using
+/// DecodeString.
 /// \param str_to_decode The percent-encoded namespace string.
+/// \param separator The encoded separator used between namespace levels.
 /// \return The decoded Namespace.
-ICEBERG_REST_EXPORT Result<Namespace> DecodeNamespace(std::string_view str_to_decode);
+ICEBERG_REST_EXPORT Result<Namespace> DecodeNamespace(std::string_view str_to_decode,
+                                                      std::string_view separator = "%1F");
 
 /// \brief Merge catalog configuration properties.
 ///
