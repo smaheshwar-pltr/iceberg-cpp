@@ -917,7 +917,7 @@ TEST_P(AvroWriterTest, MultipleAvroBlocks) {
 
     // Use raw avro-cpp reader to count blocks by tracking previousSync() changes
     auto mock_io = internal::checked_pointer_cast<arrow::ArrowFileSystemFileIO>(file_io_);
-    auto input = mock_io->fs()->OpenInputFile(temp_avro_file_).ValueOrDie();
+    auto input = mock_io->OpenInputFile(temp_avro_file_).value();
     auto input_stream = std::make_unique<AvroInputStream>(std::move(input), 1024 * 1024);
     ::avro::DataFileReader<::avro::GenericDatum> avro_reader(std::move(input_stream));
     ::avro::GenericDatum datum(avro_reader.dataSchema());
