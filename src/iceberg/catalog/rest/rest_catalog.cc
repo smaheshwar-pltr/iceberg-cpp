@@ -492,7 +492,8 @@ Result<RestCatalog::ResolvedTableIO> RestCatalog::ResolveTableFileIO(
   // Detect FileIO type from merged properties and create a per-table instance.
   std::string warehouse = config_.Get(RestCatalogProperties::kWarehouse);
   std::string io_impl;
-  if (auto it = merged.find(std::string(FileIOProperties::kImpl)); it != merged.end()) {
+  if (auto it = merged.find(std::string(RestCatalogProperties::kIOImpl.key()));
+      it != merged.end()) {
     io_impl = it->second;
   } else if (!warehouse.empty()) {
     ICEBERG_ASSIGN_OR_RAISE(auto kind, DetectBuiltinFileIO(warehouse));
