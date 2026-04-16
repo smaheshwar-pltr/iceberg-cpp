@@ -32,7 +32,7 @@
 #include "iceberg/snapshot.h"
 #include "iceberg/table_metadata.h"
 #include "iceberg/util/macros.h"
-#include "iceberg/util/snapshot_util_internal.h"
+#include "iceberg/util/snapshot_util.h"
 #include "iceberg/util/timepoint.h"
 #include "iceberg/util/type_util.h"
 
