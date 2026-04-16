@@ -23,6 +23,7 @@
 #include <string>
 #include <unordered_map>
 
+#include <arrow/buffer.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
