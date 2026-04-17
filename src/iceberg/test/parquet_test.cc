@@ -173,7 +173,7 @@ class ParquetReaderTest : public ::testing::Test {
                      .ValueOrDie();
 
     auto io = internal::checked_cast<arrow::ArrowFileSystemFileIO&>(*file_io_);
-    auto outfile = io.fs()->OpenOutputStream(temp_parquet_file_).ValueOrDie();
+    auto outfile = io.OpenOutputStream(temp_parquet_file_).value();
 
     ASSERT_TRUE(::parquet::arrow::WriteTable(*table, ::arrow::default_memory_pool(),
                                              outfile, /*chunk_size=*/2)
@@ -278,7 +278,7 @@ TEST_F(ParquetReaderTest, ReadSplit) {
 
   // Read split offsets
   auto io = internal::checked_cast<arrow::ArrowFileSystemFileIO&>(*file_io_);
-  auto input_stream = io.fs()->OpenInputFile(temp_parquet_file_).ValueOrDie();
+  auto input_stream = io.OpenInputFile(temp_parquet_file_).value();
   auto metadata = ::parquet::ReadMetaData(input_stream);
   std::vector<size_t> split_offsets;
   for (int i = 0; i < metadata->num_row_groups(); ++i) {

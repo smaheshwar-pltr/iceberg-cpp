@@ -33,7 +33,7 @@
 #include "iceberg/transaction.h"
 #include "iceberg/util/error_collector.h"
 #include "iceberg/util/macros.h"
-#include "iceberg/util/snapshot_util_internal.h"
+#include "iceberg/util/snapshot_util.h"
 
 namespace iceberg {
 

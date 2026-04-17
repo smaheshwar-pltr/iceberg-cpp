@@ -79,6 +79,25 @@ Status ArrowFileSystemFileIO::WriteFile(const std::string& file_location,
   return {};
 }
 
+Result<std::shared_ptr<::arrow::io::RandomAccessFile>>
+ArrowFileSystemFileIO::OpenInputFile(const std::string& file_location,
+                                     std::optional<size_t> length) {
+  ICEBERG_ASSIGN_OR_RAISE(auto path, ResolvePath(file_location));
+  ::arrow::fs::FileInfo file_info(path, ::arrow::fs::FileType::File);
+  if (length.has_value()) {
+    file_info.set_size(length.value());
+  }
+  ICEBERG_ARROW_ASSIGN_OR_RETURN(auto file, arrow_fs_->OpenInputFile(file_info));
+  return file;
+}
+
+Result<std::shared_ptr<::arrow::io::OutputStream>>
+ArrowFileSystemFileIO::OpenOutputStream(const std::string& file_location) {
+  ICEBERG_ASSIGN_OR_RAISE(auto path, ResolvePath(file_location));
+  ICEBERG_ARROW_ASSIGN_OR_RETURN(auto file, arrow_fs_->OpenOutputStream(path));
+  return file;
+}
+
 /// \brief Delete a file at the given location.
 Status ArrowFileSystemFileIO::DeleteFile(const std::string& file_location) {
   ICEBERG_ASSIGN_OR_RAISE(auto path, ResolvePath(file_location));

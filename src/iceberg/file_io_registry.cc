@@ -20,6 +20,8 @@
 #include <mutex>
 #include <utility>
 
+#include "iceberg/util/macros.h"
+
 namespace iceberg {
 
 namespace {
@@ -55,7 +57,9 @@ Result<std::unique_ptr<FileIO>> FileIORegistry::Load(
     }
     factory = it->second;
   }
-  return factory(properties);
+  ICEBERG_ASSIGN_OR_RAISE(auto io, factory(properties));
+  io->properties_ = properties;
+  return io;
 }
 
 }  // namespace iceberg
