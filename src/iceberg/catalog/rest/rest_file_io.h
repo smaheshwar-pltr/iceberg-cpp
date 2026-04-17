@@ -21,10 +21,13 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include "iceberg/catalog/rest/catalog_properties.h"
 #include "iceberg/catalog/rest/iceberg_rest_export.h"
+#include "iceberg/catalog/rest/types.h"
 #include "iceberg/file_io.h"
 #include "iceberg/file_io_registry.h"
 #include "iceberg/result.h"
@@ -43,5 +46,16 @@ ICEBERG_REST_EXPORT std::string_view BuiltinFileIOName(BuiltinFileIOKind kind);
 
 ICEBERG_REST_EXPORT Result<std::unique_ptr<FileIO>> MakeCatalogFileIO(
     const RestCatalogProperties& config);
+
+/// \brief Resolve a per-table FileIO from a LoadTableResult.
+///
+/// Merges catalog properties, table config, and the best-matching storage
+/// credential (longest prefix match on metadata_location), then creates a
+/// per-table FileIO via FileIORegistry. Falls back to \p catalog_io when
+/// no per-table config is present or the FileIO type cannot be detected.
+ICEBERG_REST_EXPORT Result<std::shared_ptr<FileIO>> ResolveTableFileIO(
+    const std::shared_ptr<FileIO>& catalog_io,
+    const std::unordered_map<std::string, std::string>& catalog_props,
+    const std::string& warehouse, const LoadTableResult& result);
 
 }  // namespace iceberg::rest

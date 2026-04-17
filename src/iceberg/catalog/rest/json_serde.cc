@@ -72,6 +72,8 @@ constexpr std::string_view kStack = "stack";
 constexpr std::string_view kError = "error";
 constexpr std::string_view kIdentifier = "identifier";
 constexpr std::string_view kRequirements = "requirements";
+constexpr std::string_view kStorageCredentials = "storage-credentials";
+constexpr std::string_view kPrefix = "prefix";
 constexpr std::string_view kAccessToken = "access_token";
 constexpr std::string_view kTokenType = "token_type";
 constexpr std::string_view kExpiresIn = "expires_in";
@@ -217,12 +219,35 @@ Result<RenameTableRequest> RenameTableRequestFromJson(const nlohmann::json& json
   return request;
 }
 
+// StorageCredential serialization
+nlohmann::json ToJson(const StorageCredential& cred) {
+  nlohmann::json json;
+  json[kPrefix] = cred.prefix;
+  json[kConfig] = cred.config;
+  return json;
+}
+
+Result<StorageCredential> StorageCredentialFromJson(const nlohmann::json& json) {
+  StorageCredential cred;
+  ICEBERG_ASSIGN_OR_RAISE(cred.prefix, GetJsonValue<std::string>(json, kPrefix));
+  ICEBERG_ASSIGN_OR_RAISE(cred.config,
+                          GetJsonValueOrDefault<decltype(cred.config)>(json, kConfig));
+  return cred;
+}
+
 // LoadTableResult (used by CreateTableResponse, LoadTableResponse)
 nlohmann::json ToJson(const LoadTableResult& result) {
   nlohmann::json json;
   SetOptionalStringField(json, kMetadataLocation, result.metadata_location);
   json[kMetadata] = ToJson(*result.metadata);
   SetContainerField(json, kConfig, result.config);
+  if (!result.storage_credentials.empty()) {
+    nlohmann::json creds_json = nlohmann::json::array();
+    for (const auto& cred : result.storage_credentials) {
+      creds_json.push_back(ToJson(cred));
+    }
+    json[kStorageCredentials] = std::move(creds_json);
+  }
   return json;
 }
 
@@ -235,6 +260,14 @@ Result<LoadTableResult> LoadTableResultFromJson(const nlohmann::json& json) {
   ICEBERG_ASSIGN_OR_RAISE(result.metadata, TableMetadataFromJson(metadata_json));
   ICEBERG_ASSIGN_OR_RAISE(result.config,
                           GetJsonValueOrDefault<decltype(result.config)>(json, kConfig));
+  if (json.contains(kStorageCredentials)) {
+    ICEBERG_ASSIGN_OR_RAISE(auto creds_json,
+                            GetJsonValue<nlohmann::json>(json, kStorageCredentials));
+    for (const auto& cred_json : creds_json) {
+      ICEBERG_ASSIGN_OR_RAISE(auto cred, StorageCredentialFromJson(cred_json));
+      result.storage_credentials.push_back(std::move(cred));
+    }
+  }
   ICEBERG_RETURN_UNEXPECTED(result.Validate());
   return result;
 }
@@ -528,5 +561,6 @@ ICEBERG_DEFINE_FROM_JSON(CreateTableRequest)
 ICEBERG_DEFINE_FROM_JSON(CommitTableRequest)
 ICEBERG_DEFINE_FROM_JSON(CommitTableResponse)
 ICEBERG_DEFINE_FROM_JSON(OAuthTokenResponse)
+ICEBERG_DEFINE_FROM_JSON(StorageCredential)
 
 }  // namespace iceberg::rest
