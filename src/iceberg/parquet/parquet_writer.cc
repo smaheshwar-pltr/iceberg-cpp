@@ -42,7 +42,7 @@ namespace {
 Result<std::shared_ptr<::arrow::io::OutputStream>> OpenOutputStream(
     const WriterOptions& options) {
   auto io = internal::checked_pointer_cast<arrow::ArrowFileSystemFileIO>(options.io);
-  ICEBERG_ARROW_ASSIGN_OR_RETURN(auto output, io->fs()->OpenOutputStream(options.path));
+  ICEBERG_ASSIGN_OR_RAISE(auto output, io->OpenOutputStream(options.path));
   return output;
 }
 
