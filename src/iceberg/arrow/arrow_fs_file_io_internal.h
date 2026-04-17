@@ -20,8 +20,10 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 
 #include <arrow/filesystem/filesystem.h>
+#include <arrow/io/interfaces.h>
 
 #include "iceberg/file_io.h"
 #include "iceberg/iceberg_bundle_export.h"
@@ -51,6 +53,27 @@ class ICEBERG_BUNDLE_EXPORT ArrowFileSystemFileIO : public FileIO {
 
   /// \brief Delete a file at the given location.
   Status DeleteFile(const std::string& file_location) override;
+
+  /// \brief Open an input file for reading, resolving any URI scheme in the path.
+  ///
+  /// This method resolves URI schemes (e.g., "s3://bucket/key" -> "bucket/key")
+  /// before opening the file. Use this instead of calling fs()->OpenInputFile()
+  /// directly to ensure URI resolution is applied consistently.
+  ///
+  /// \param file_location The file location, which may contain a URI scheme.
+  /// \param length Optional file size hint for the Arrow filesystem.
+  Result<std::shared_ptr<::arrow::io::RandomAccessFile>> OpenInputFile(
+      const std::string& file_location, std::optional<size_t> length = std::nullopt);
+
+  /// \brief Open an output stream for writing, resolving any URI scheme in the path.
+  ///
+  /// This method resolves URI schemes (e.g., "s3://bucket/key" -> "bucket/key")
+  /// before opening the stream. Use this instead of calling fs()->OpenOutputStream()
+  /// directly to ensure URI resolution is applied consistently.
+  ///
+  /// \param file_location The file location, which may contain a URI scheme.
+  Result<std::shared_ptr<::arrow::io::OutputStream>> OpenOutputStream(
+      const std::string& file_location);
 
   /// \brief Get the Arrow file system.
   const std::shared_ptr<::arrow::fs::FileSystem>& fs() const { return arrow_fs_; }

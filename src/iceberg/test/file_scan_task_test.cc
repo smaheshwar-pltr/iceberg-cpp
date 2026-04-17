@@ -69,7 +69,7 @@ class FileScanTaskTest : public TempFileTestBase {
                      .ValueOrDie();
 
     auto io = internal::checked_cast<arrow::ArrowFileSystemFileIO&>(*file_io_);
-    auto outfile = io.fs()->OpenOutputStream(temp_parquet_file_).ValueOrDie();
+    auto outfile = io.OpenOutputStream(temp_parquet_file_).value();
 
     ASSERT_TRUE(::parquet::arrow::WriteTable(*table, ::arrow::default_memory_pool(),
                                              outfile, chunk_size)
@@ -85,7 +85,7 @@ class FileScanTaskTest : public TempFileTestBase {
     auto empty_table = ::arrow::Table::FromRecordBatches(arrow_schema, {}).ValueOrDie();
 
     auto io = internal::checked_cast<arrow::ArrowFileSystemFileIO&>(*file_io_);
-    auto outfile = io.fs()->OpenOutputStream(temp_parquet_file_).ValueOrDie();
+    auto outfile = io.OpenOutputStream(temp_parquet_file_).value();
     ASSERT_TRUE(::parquet::arrow::WriteTable(*empty_table, ::arrow::default_memory_pool(),
                                              outfile, 1024)
                     .ok());
