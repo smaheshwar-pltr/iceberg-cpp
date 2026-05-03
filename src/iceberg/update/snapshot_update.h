@@ -52,6 +52,7 @@ class ICEBERG_EXPORT SnapshotUpdate : public PendingUpdate {
   ~SnapshotUpdate() override;
 
   Kind kind() const override { return Kind::kUpdateSnapshot; }
+  bool IsRetryable() const override { return true; }
 
   /// \brief Set a callback to delete files instead of the table's default.
   ///
@@ -118,7 +119,7 @@ class ICEBERG_EXPORT SnapshotUpdate : public PendingUpdate {
   Result<ApplyResult> Apply();
 
   /// \brief Finalize the snapshot update, cleaning up any uncommitted files.
-  Status Finalize(std::optional<Error> commit_error) override;
+  Status Finalize(Result<const TableMetadata*> commit_result) override;
 
  protected:
   explicit SnapshotUpdate(std::shared_ptr<TransactionContext> ctx);

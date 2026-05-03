@@ -22,6 +22,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -73,6 +75,7 @@ class ICEBERG_EXPORT ExpireSnapshots : public PendingUpdate {
     std::vector<int64_t> snapshot_ids_to_remove;
     std::vector<int32_t> partition_spec_ids_to_remove;
     std::unordered_set<int32_t> schema_ids_to_remove;
+    std::shared_ptr<const TableMetadata> metadata_before_expiration;
   };
 
   /// \brief Expires a specific Snapshot identified by id.
@@ -137,10 +140,22 @@ class ICEBERG_EXPORT ExpireSnapshots : public PendingUpdate {
   ExpireSnapshots& CleanExpiredMetadata(bool clean);
 
   Kind kind() const final { return Kind::kExpireSnapshots; }
+  bool IsRetryable() const override { return true; }
 
   /// \brief Apply the pending changes and return the results
   /// \return The results of changes
   Result<ApplyResult> Apply();
+
+  /// \brief Finalize the expire snapshots update, cleaning up expired files.
+  ///
+  /// After a successful commit, this method deletes manifest files, manifest lists,
+  /// data files, and statistics files that are no longer referenced by any valid
+  /// snapshot. The cleanup behavior is controlled by the CleanupLevel setting.
+  ///
+  /// \param commit_result The committed table metadata when the commit succeeds, or the
+  /// commit error when it fails.
+  /// \return Status indicating success or failure
+  Status Finalize(Result<const TableMetadata*> commit_result) override;
 
  private:
   explicit ExpireSnapshots(std::shared_ptr<TransactionContext> ctx);
@@ -159,7 +174,6 @@ class ICEBERG_EXPORT ExpireSnapshots : public PendingUpdate {
   Result<std::unordered_set<int64_t>> UnreferencedSnapshotIdsToRetain(
       const SnapshotToRef& refs) const;
 
- private:
   const TimePointMs current_time_ms_;
   const int64_t default_max_ref_age_ms_;
   int32_t default_min_num_snapshots_;
@@ -169,6 +183,9 @@ class ICEBERG_EXPORT ExpireSnapshots : public PendingUpdate {
   enum CleanupLevel cleanup_level_ { CleanupLevel::kAll };
   bool clean_expired_metadata_{false};
   bool specified_snapshot_id_{false};
+
+  /// Cached result from Apply(), consumed by Finalize() and cleared after use.
+  std::optional<ApplyResult> apply_result_;
 };
 
 }  // namespace iceberg
