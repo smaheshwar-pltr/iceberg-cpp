@@ -22,5 +22,8 @@ services:
       - CATALOG_CATALOG__IMPL=org.apache.iceberg.jdbc.JdbcCatalog
       - CATALOG_URI=jdbc:sqlite:file:/tmp/iceberg_rest_mode=memory
       - CATALOG_WAREHOUSE=file:///tmp/iceberg_warehouse
+      - CATALOG_INCLUDE__CREDENTIALS=true
+      - CATALOG_S3_ACCESS__KEY__ID=dummy-access-key
+      - CATALOG_S3_SECRET__ACCESS__KEY=dummy-secret-key
     ports:
       - "8181:8181"
