@@ -33,7 +33,7 @@
 #include "iceberg/table.h"
 #include "iceberg/transaction.h"
 #include "iceberg/util/macros.h"
-#include "iceberg/util/snapshot_util_internal.h"
+#include "iceberg/util/snapshot_util.h"
 #include "iceberg/util/string_util.h"
 #include "iceberg/util/uuid.h"
 
