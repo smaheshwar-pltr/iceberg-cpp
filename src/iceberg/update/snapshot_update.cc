@@ -226,6 +226,18 @@ int64_t SnapshotUpdate::SnapshotId() {
 
 Result<SnapshotUpdate::ApplyResult> SnapshotUpdate::Apply() {
   ICEBERG_RETURN_UNEXPECTED(CheckErrors());
+
+  if (staged_snapshot_ != nullptr) {
+    for (const auto& manifest_list : manifest_lists_) {
+      std::ignore = DeleteFile(manifest_list);
+    }
+    manifest_lists_.clear();
+    CleanUncommitted(std::unordered_set<std::string>{});
+
+    staged_snapshot_ = nullptr;
+    summary_.Clear();
+  }
+
   ICEBERG_ASSIGN_OR_RAISE(auto parent_snapshot,
                           SnapshotUtil::OptionalLatestSnapshot(base(), target_branch_));
 
@@ -297,9 +309,9 @@ Result<SnapshotUpdate::ApplyResult> SnapshotUpdate::Apply() {
                      .stage_only = stage_only_};
 }
 
-Status SnapshotUpdate::Finalize(std::optional<Error> commit_error) {
-  if (commit_error.has_value()) {
-    if (commit_error->kind == ErrorKind::kCommitStateUnknown) {
+Status SnapshotUpdate::Finalize(Result<const TableMetadata*> commit_result) {
+  if (!commit_result.has_value()) {
+    if (commit_result.error().kind == ErrorKind::kCommitStateUnknown) {
       return {};
     }
     CleanAll();
