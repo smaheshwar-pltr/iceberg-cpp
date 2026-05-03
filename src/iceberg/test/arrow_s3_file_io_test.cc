@@ -23,10 +23,12 @@
 #include <string>
 #include <unordered_map>
 
+#include <arrow/buffer.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "iceberg/arrow/arrow_file_io.h"
+#include "iceberg/arrow/arrow_fs_file_io_internal.h"
 #include "iceberg/arrow/s3/s3_properties.h"
 #include "iceberg/test/matchers.h"
 
@@ -179,6 +181,40 @@ TEST_F(ArrowS3FileIOTest, MakeS3FileIOWithTimeouts) {
 
   auto io_res = MakeS3FileIO(properties);
   ASSERT_THAT(io_res, IsOk());
+}
+
+TEST_F(ArrowS3FileIOTest, OpenInputFileAndOutputStreamWithS3URI) {
+  RequireIntegrationEnv();
+  auto io_res = MakeS3FileIO(PropertiesFromEnv());
+  ASSERT_THAT(io_res, IsOk());
+  // Cast to ArrowFileSystemFileIO to access OpenInputFile/OpenOutputStream.
+  auto* fs_io = dynamic_cast<ArrowFileSystemFileIO*>(io_res->get());
+  ASSERT_NE(fs_io, nullptr);
+
+  auto object_uri = ObjectUri("iceberg_open_file_uri_test.txt");
+  const std::string data = "open file URI round trip";
+
+  // Write via OpenOutputStream with an s3:// URI.
+  {
+    auto out = fs_io->OpenOutputStream(object_uri);
+    ASSERT_THAT(out, IsOk());
+    ASSERT_TRUE((*out)->Write(data.data(), data.size()).ok());
+    ASSERT_TRUE((*out)->Close().ok());
+  }
+
+  // Read back via OpenInputFile with the same s3:// URI.
+  {
+    auto in = fs_io->OpenInputFile(object_uri);
+    ASSERT_THAT(in, IsOk());
+    auto buf_result = (*in)->Read(data.size());
+    ASSERT_TRUE(buf_result.ok()) << buf_result.status().ToString();
+    auto buf = *buf_result;
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(buf->data()), buf->size()), data);
+  }
+
+  // Clean up.
+  auto del = fs_io->DeleteFile(object_uri);
+  EXPECT_THAT(del, IsOk());
 }
 
 }  // namespace iceberg::arrow

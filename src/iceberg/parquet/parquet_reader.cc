@@ -50,13 +50,8 @@ namespace {
 
 Result<std::shared_ptr<::arrow::io::RandomAccessFile>> OpenInputStream(
     const ReaderOptions& options) {
-  ::arrow::fs::FileInfo file_info(options.path, ::arrow::fs::FileType::File);
-  if (options.length) {
-    file_info.set_size(options.length.value());
-  }
-
   auto io = internal::checked_pointer_cast<arrow::ArrowFileSystemFileIO>(options.io);
-  ICEBERG_ARROW_ASSIGN_OR_RETURN(auto input, io->fs()->OpenInputFile(file_info));
+  ICEBERG_ASSIGN_OR_RAISE(auto input, io->OpenInputFile(options.path, options.length));
   return input;
 }
 

@@ -50,7 +50,7 @@ namespace {
 Result<std::unique_ptr<AvroOutputStream>> CreateOutputStream(const WriterOptions& options,
                                                              int64_t buffer_size) {
   auto io = internal::checked_pointer_cast<arrow::ArrowFileSystemFileIO>(options.io);
-  ICEBERG_ARROW_ASSIGN_OR_RETURN(auto output, io->fs()->OpenOutputStream(options.path));
+  ICEBERG_ASSIGN_OR_RAISE(auto output, io->OpenOutputStream(options.path));
   return std::make_unique<AvroOutputStream>(output, buffer_size);
 }
 

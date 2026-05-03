@@ -23,7 +23,6 @@
 
 #include <arrow/array/builder_base.h>
 #include <arrow/c/bridge.h>
-#include <arrow/filesystem/filesystem.h>
 #include <arrow/record_batch.h>
 #include <arrow/result.h>
 #include <arrow/type.h>
@@ -51,13 +50,8 @@ namespace {
 
 Result<std::unique_ptr<AvroInputStream>> CreateInputStream(const ReaderOptions& options,
                                                            int64_t buffer_size) {
-  ::arrow::fs::FileInfo file_info(options.path, ::arrow::fs::FileType::File);
-  if (options.length) {
-    file_info.set_size(options.length.value());
-  }
-
   auto io = internal::checked_pointer_cast<arrow::ArrowFileSystemFileIO>(options.io);
-  ICEBERG_ARROW_ASSIGN_OR_RETURN(auto file, io->fs()->OpenInputFile(file_info));
+  ICEBERG_ASSIGN_OR_RAISE(auto file, io->OpenInputFile(options.path, options.length));
   return std::make_unique<AvroInputStream>(file, buffer_size);
 }
 
