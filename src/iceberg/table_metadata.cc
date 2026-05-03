@@ -1440,9 +1440,8 @@ Status TableMetadataBuilder::Impl::RemoveSnapshots(
     if (ids_to_remove.contains(snapshot_id)) {
       snapshots_by_id_.erase(snapshot_id);
       snapshot_ids_to_remove.push_back(snapshot_id);
-      // FIXME: implement statistics removal and uncomment below
-      // ICEBERG_RETURN_UNEXPECTED(RemoveStatistics(snapshot_id));
-      // ICEBERG_RETURN_UNEXPECTED(RemovePartitionStatistics(snapshot_id));
+      ICEBERG_RETURN_UNEXPECTED(RemoveStatistics(snapshot_id));
+      ICEBERG_RETURN_UNEXPECTED(RemovePartitionStatistics(snapshot_id));
     } else {
       retained_snapshots.push_back(std::move(snapshot));
     }

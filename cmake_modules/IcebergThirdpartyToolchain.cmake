@@ -34,13 +34,13 @@ set(ICEBERG_ARROW_INSTALL_INTERFACE_LIBS)
 # ICEBERG_CPR_URL            - cpr tarball URL
 #
 # Example usage:
-#   export ICEBERG_ARROW_URL="https://your-mirror.com/apache-arrow-22.0.0.tar.gz"
+#   export ICEBERG_ARROW_URL="https://your-mirror.com/apache-arrow-24.0.0.tar.gz"
 #   cmake -S . -B build
 #
 
-set(ICEBERG_ARROW_BUILD_VERSION "22.0.0")
+set(ICEBERG_ARROW_BUILD_VERSION "24.0.0")
 set(ICEBERG_ARROW_BUILD_SHA256_CHECKSUM
-    "131250cd24dec0cddde04e2ad8c9e2bc43edc5e84203a81cf71cf1a33a6e7e0f")
+    "9a8094d24fa33b90c672ab77fdda253f29300c8b0dd3f0b8e55a29dbd98b82c9")
 
 if(DEFINED ENV{ICEBERG_ARROW_URL})
   set(ARROW_SOURCE_URL "$ENV{ICEBERG_ARROW_URL}")
@@ -112,7 +112,7 @@ function(resolve_arrow_dependency)
   set(ARROW_WITH_ZLIB ON)
   set(ZLIB_SOURCE "SYSTEM")
   set(ARROW_VERBOSE_THIRDPARTY_BUILD OFF)
-  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_STANDARD 20)
 
   fetchcontent_declare(VendoredArrow
                        ${FC_DECLARE_COMMON_OPTIONS}
