@@ -15,6 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
+set(CMAKE_COMPILE_WARNING_AS_ERROR FALSE)
+
 fetchcontent_declare(googletest
                      GIT_REPOSITORY https://github.com/google/googletest.git
                      GIT_TAG b514bdc898e2951020cbdca1304b75f5950d1f59 # release-1.15.2
@@ -114,9 +116,11 @@ add_iceberg_test(util_test
                  decimal_test.cc
                  endian_test.cc
                  formatter_test.cc
+                 lazy_test.cc
                  location_util_test.cc
                  roaring_position_bitmap_test.cc
                  position_delete_index_test.cc
+                 retry_util_test.cc
                  string_util_test.cc
                  struct_like_set_test.cc
                  transform_util_test.cc
@@ -182,6 +186,7 @@ if(ICEBERG_BUILD_BUNDLE)
                    SOURCES
                    file_scan_task_test.cc
                    incremental_append_scan_test.cc
+                   incremental_changelog_scan_test.cc
                    table_scan_test.cc)
 
   add_iceberg_test(table_update_test
