@@ -19,15 +19,73 @@
 
 #include "iceberg/util/retry_util.h"
 
-#include <chrono>
-#include <thread>
+#include <concepts>
+#include <limits>
+#include <vector>
 
 #include <gtest/gtest.h>
 
 #include "iceberg/result.h"
 #include "iceberg/test/matchers.h"
+#include "iceberg/util/retry_util_internal.h"
 
 namespace iceberg {
+namespace {
+
+struct ResultReturningTask {
+  Result<int> operator()() const { return 1; }
+};
+
+struct NonResultReturningTask {
+  int operator()() const { return 1; }
+};
+
+static_assert(detail::RetryTask<ResultReturningTask>);
+static_assert(!detail::RetryTask<NonResultReturningTask>);
+static_assert(requires(RetryRunner runner, ResultReturningTask task) {
+  { runner.Run(task) } -> std::same_as<Result<int>>;
+});
+
+class FakeRetryEnvironment {
+ public:
+  using Duration = RetryTestHooks::Duration;
+  using TimePoint = RetryTestHooks::TimePoint;
+
+  FakeRetryEnvironment() {
+    hooks_.now = [this]() { return now_; };
+    hooks_.sleep_for = [this](Duration duration) {
+      sleep_durations_.push_back(duration);
+      now_ += duration;
+    };
+    hooks_.jitter = [this](int32_t base_delay_ms) {
+      observed_base_delays_ms_.push_back(base_delay_ms);
+      return base_delay_ms + jitter_offset_ms_;
+    };
+  }
+
+  void Advance(Duration duration) { now_ += duration; }
+
+  void SetJitterOffsetMs(int32_t jitter_offset_ms) {
+    jitter_offset_ms_ = jitter_offset_ms;
+  }
+
+  const RetryTestHooks& hooks() const { return hooks_; }
+
+  const std::vector<Duration>& sleep_durations() const { return sleep_durations_; }
+
+  const std::vector<int32_t>& observed_base_delays_ms() const {
+    return observed_base_delays_ms_;
+  }
+
+ private:
+  RetryTestHooks hooks_;
+  TimePoint now_{};
+  int32_t jitter_offset_ms_ = 0;
+  std::vector<Duration> sleep_durations_;
+  std::vector<int32_t> observed_base_delays_ms_;
+};
+
+}  // namespace
 
 TEST(RetryRunnerTest, SuccessOnFirstAttempt) {
   int call_count = 0;
@@ -37,6 +95,7 @@ TEST(RetryRunnerTest, SuccessOnFirstAttempt) {
                                         .min_wait_ms = 1,
                                         .max_wait_ms = 10,
                                         .total_timeout_ms = 5000})
+                    .OnlyRetryOn(ErrorKind::kCommitFailed)
                     .Run(
                         [&]() -> Result<int> {
                           ++call_count;
@@ -58,6 +117,7 @@ TEST(RetryRunnerTest, RetryOnceThenSucceed) {
                                         .min_wait_ms = 1,
                                         .max_wait_ms = 10,
                                         .total_timeout_ms = 5000})
+                    .OnlyRetryOn(ErrorKind::kCommitFailed)
                     .Run(
                         [&]() -> Result<int> {
                           ++call_count;
@@ -82,6 +142,7 @@ TEST(RetryRunnerTest, MaxAttemptsExhausted) {
                                         .min_wait_ms = 1,
                                         .max_wait_ms = 10,
                                         .total_timeout_ms = 5000})
+                    .OnlyRetryOn(ErrorKind::kCommitFailed)
                     .Run(
                         [&]() -> Result<int> {
                           ++call_count;
@@ -140,6 +201,32 @@ TEST(RetryRunnerTest, OnlyRetryOnMatchingError) {
   EXPECT_EQ(attempts, 3);
 }
 
+TEST(RetryRunnerTest, OnlyRetryOnTakesPrecedenceOverStopRetryOn) {
+  int call_count = 0;
+  int32_t attempts = 0;
+
+  auto result = RetryRunner(RetryConfig{.num_retries = 2,
+                                        .min_wait_ms = 1,
+                                        .max_wait_ms = 10,
+                                        .total_timeout_ms = 5000})
+                    .OnlyRetryOn(ErrorKind::kCommitFailed)
+                    .StopRetryOn(ErrorKind::kCommitFailed)
+                    .Run(
+                        [&]() -> Result<int> {
+                          ++call_count;
+                          if (call_count == 1) {
+                            return CommitFailed("transient");
+                          }
+                          return 100;
+                        },
+                        &attempts);
+
+  EXPECT_THAT(result, IsOk());
+  EXPECT_EQ(*result, 100);
+  EXPECT_EQ(call_count, 2);
+  EXPECT_EQ(attempts, 2);
+}
+
 TEST(RetryRunnerTest, StopRetryOnMatchingError) {
   int call_count = 0;
   int32_t attempts = 0;
@@ -148,7 +235,7 @@ TEST(RetryRunnerTest, StopRetryOnMatchingError) {
                                         .min_wait_ms = 1,
                                         .max_wait_ms = 10,
                                         .total_timeout_ms = 5000})
-                    .StopRetryOn({ErrorKind::kCommitStateUnknown})
+                    .StopRetryOn(ErrorKind::kCommitStateUnknown)
                     .Run(
                         [&]() -> Result<int> {
                           ++call_count;
@@ -161,14 +248,40 @@ TEST(RetryRunnerTest, StopRetryOnMatchingError) {
   EXPECT_EQ(attempts, 1);
 }
 
-TEST(RetryRunnerTest, ZeroRetries) {
+TEST(RetryRunnerTest, StopRetryOnNonMatchingErrorAllowsRetry) {
+  int call_count = 0;
+  int32_t attempts = 0;
+
+  auto result = RetryRunner(RetryConfig{.num_retries = 2,
+                                        .min_wait_ms = 1,
+                                        .max_wait_ms = 10,
+                                        .total_timeout_ms = 5000})
+                    .StopRetryOn({ErrorKind::kCommitStateUnknown})
+                    .Run(
+                        [&]() -> Result<int> {
+                          ++call_count;
+                          if (call_count == 1) {
+                            return CommitFailed("retryable");
+                          }
+                          return 88;
+                        },
+                        &attempts);
+
+  EXPECT_THAT(result, IsOk());
+  EXPECT_EQ(*result, 88);
+  EXPECT_EQ(call_count, 2);
+  EXPECT_EQ(attempts, 2);
+}
+
+TEST(RetryRunnerTest, ZeroRetriesAllowsUnsetPolicyAndSkipsBackoffValidation) {
   int call_count = 0;
   int32_t attempts = 0;
 
   auto result = RetryRunner(RetryConfig{.num_retries = 0,
-                                        .min_wait_ms = 1,
-                                        .max_wait_ms = 10,
-                                        .total_timeout_ms = 5000})
+                                        .min_wait_ms = 0,
+                                        .max_wait_ms = 0,
+                                        .total_timeout_ms = 5000,
+                                        .scale_factor = 0.5})
                     .Run(
                         [&]() -> Result<int> {
                           ++call_count;
@@ -181,7 +294,159 @@ TEST(RetryRunnerTest, ZeroRetries) {
   EXPECT_EQ(attempts, 1);
 }
 
+TEST(RetryRunnerTest, NegativeRetriesFailsBeforeTaskRuns) {
+  int call_count = 0;
+  int32_t attempts = 0;
+
+  auto result = RetryRunner(RetryConfig{.num_retries = -1,
+                                        .min_wait_ms = 1,
+                                        .max_wait_ms = 10,
+                                        .total_timeout_ms = 5000})
+                    .Run(
+                        [&]() -> Result<int> {
+                          ++call_count;
+                          return 1;
+                        },
+                        &attempts);
+
+  EXPECT_THAT(result, IsError(ErrorKind::kInvalidArgument));
+  EXPECT_THAT(result, HasErrorMessage("num_retries must be non-negative"));
+  EXPECT_EQ(call_count, 0);
+  EXPECT_EQ(attempts, 0);
+}
+
+TEST(RetryRunnerTest, InvalidBackoffConfigFailsBeforeTaskRuns) {
+  struct InvalidConfigCase {
+    RetryConfig config;
+    const char* expected_message;
+  };
+
+  const std::vector<InvalidConfigCase> test_cases = {
+      {.config = RetryConfig{.num_retries = std::numeric_limits<int32_t>::max(),
+                             .min_wait_ms = 1,
+                             .max_wait_ms = 10,
+                             .total_timeout_ms = 5000},
+       .expected_message = "num_retries is too large"},
+      {.config = RetryConfig{.num_retries = 1,
+                             .min_wait_ms = 0,
+                             .max_wait_ms = 10,
+                             .total_timeout_ms = 5000},
+       .expected_message = "min_wait_ms must be positive"},
+      {.config = RetryConfig{.num_retries = 1,
+                             .min_wait_ms = 1,
+                             .max_wait_ms = 0,
+                             .total_timeout_ms = 5000},
+       .expected_message = "max_wait_ms must be positive"},
+      {.config = RetryConfig{.num_retries = 1,
+                             .min_wait_ms = 20,
+                             .max_wait_ms = 10,
+                             .total_timeout_ms = 5000},
+       .expected_message = "max_wait_ms must be greater than or equal to min_wait_ms"},
+      {.config = RetryConfig{.num_retries = 1,
+                             .min_wait_ms = 1,
+                             .max_wait_ms = 10,
+                             .total_timeout_ms = 5000,
+                             .scale_factor = 0.5},
+       .expected_message = "scale_factor must be finite and at least 1.0"},
+      {.config = RetryConfig{.num_retries = 1,
+                             .min_wait_ms = 1,
+                             .max_wait_ms = 10,
+                             .total_timeout_ms = 5000,
+                             .scale_factor = std::numeric_limits<double>::infinity()},
+       .expected_message = "scale_factor must be finite and at least 1.0"},
+  };
+
+  for (const auto& test_case : test_cases) {
+    int call_count = 0;
+    int32_t attempts = 0;
+
+    auto result = RetryRunner(test_case.config)
+                      .OnlyRetryOn(ErrorKind::kCommitFailed)
+                      .Run(
+                          [&]() -> Result<int> {
+                            ++call_count;
+                            return 1;
+                          },
+                          &attempts);
+
+    EXPECT_THAT(result, IsError(ErrorKind::kInvalidArgument))
+        << test_case.expected_message;
+    EXPECT_THAT(result, HasErrorMessage(test_case.expected_message));
+    EXPECT_EQ(call_count, 0);
+    EXPECT_EQ(attempts, 0);
+  }
+}
+
+TEST(RetryRunnerTest, UnsetRetryPolicyFailsBeforeTaskRuns) {
+  int call_count = 0;
+  int32_t attempts = 0;
+
+  auto result = RetryRunner(RetryConfig{.num_retries = 1,
+                                        .min_wait_ms = 1,
+                                        .max_wait_ms = 10,
+                                        .total_timeout_ms = 5000})
+                    .Run(
+                        [&]() -> Result<int> {
+                          ++call_count;
+                          return CommitFailed("fail");
+                        },
+                        &attempts);
+
+  EXPECT_THAT(result, IsError(ErrorKind::kInvalidArgument));
+  EXPECT_THAT(result, HasErrorMessage("Retry policy must be explicitly configured"));
+  EXPECT_EQ(call_count, 0);
+  EXPECT_EQ(attempts, 0);
+}
+
+TEST(RetryRunnerTest, EmptyOnlyRetryOnPolicyFailsBeforeTaskRuns) {
+  int call_count = 0;
+  int32_t attempts = 0;
+
+  auto result = RetryRunner(RetryConfig{.num_retries = 1,
+                                        .min_wait_ms = 1,
+                                        .max_wait_ms = 10,
+                                        .total_timeout_ms = 5000})
+                    .OnlyRetryOn(std::initializer_list<ErrorKind>{})
+                    .Run(
+                        [&]() -> Result<int> {
+                          ++call_count;
+                          return CommitFailed("fail");
+                        },
+                        &attempts);
+
+  EXPECT_THAT(result, IsError(ErrorKind::kInvalidArgument));
+  EXPECT_THAT(result,
+              HasErrorMessage("Retry policy must include at least one error kind"));
+  EXPECT_EQ(call_count, 0);
+  EXPECT_EQ(attempts, 0);
+}
+
+TEST(RetryRunnerTest, EmptyStopRetryOnPolicyFailsBeforeTaskRuns) {
+  int call_count = 0;
+  int32_t attempts = 0;
+
+  auto result = RetryRunner(RetryConfig{.num_retries = 1,
+                                        .min_wait_ms = 1,
+                                        .max_wait_ms = 10,
+                                        .total_timeout_ms = 5000})
+                    .StopRetryOn({})
+                    .Run(
+                        [&]() -> Result<int> {
+                          ++call_count;
+                          return CommitFailed("fail");
+                        },
+                        &attempts);
+
+  EXPECT_THAT(result, IsError(ErrorKind::kInvalidArgument));
+  EXPECT_THAT(result,
+              HasErrorMessage("Retry policy must include at least one error kind"));
+  EXPECT_EQ(call_count, 0);
+  EXPECT_EQ(attempts, 0);
+}
+
 TEST(RetryRunnerTest, TotalTimeoutStopsBeforeStartingAnotherAttempt) {
+  FakeRetryEnvironment fake_retry;
+  ScopedRetryTestHooks scoped_hooks(fake_retry.hooks());
   int call_count = 0;
   int32_t attempts = 0;
 
@@ -189,14 +454,12 @@ TEST(RetryRunnerTest, TotalTimeoutStopsBeforeStartingAnotherAttempt) {
                                         .min_wait_ms = 20,
                                         .max_wait_ms = 20,
                                         .total_timeout_ms = 15})
+                    .OnlyRetryOn(ErrorKind::kCommitFailed)
                     .Run(
                         [&]() -> Result<int> {
                           ++call_count;
-                          // The first failure consumes most of the 15 ms budget, so the
-                          // next 20 ms backoff should prevent another attempt from
-                          // starting.
                           if (call_count == 1) {
-                            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                            fake_retry.Advance(FakeRetryEnvironment::Duration(10));
                           }
                           return CommitFailed("retry budget exhausted");
                         },
@@ -205,6 +468,97 @@ TEST(RetryRunnerTest, TotalTimeoutStopsBeforeStartingAnotherAttempt) {
   EXPECT_THAT(result, IsError(ErrorKind::kCommitFailed));
   EXPECT_EQ(call_count, 1);
   EXPECT_EQ(attempts, 1);
+  EXPECT_TRUE(fake_retry.sleep_durations().empty());
+  EXPECT_EQ(fake_retry.observed_base_delays_ms(), std::vector<int32_t>({20}));
+}
+
+TEST(RetryRunnerTest, TotalTimeoutStopsWhenDelayEqualsRemainingBudget) {
+  FakeRetryEnvironment fake_retry;
+  ScopedRetryTestHooks scoped_hooks(fake_retry.hooks());
+  int call_count = 0;
+  int32_t attempts = 0;
+
+  auto result = RetryRunner(RetryConfig{.num_retries = 3,
+                                        .min_wait_ms = 10,
+                                        .max_wait_ms = 10,
+                                        .total_timeout_ms = 20})
+                    .OnlyRetryOn(ErrorKind::kCommitFailed)
+                    .Run(
+                        [&]() -> Result<int> {
+                          ++call_count;
+                          fake_retry.Advance(FakeRetryEnvironment::Duration(10));
+                          return CommitFailed("retry budget exhausted");
+                        },
+                        &attempts);
+
+  EXPECT_THAT(result, IsError(ErrorKind::kCommitFailed));
+  EXPECT_EQ(call_count, 1);
+  EXPECT_EQ(attempts, 1);
+  EXPECT_TRUE(fake_retry.sleep_durations().empty());
+  EXPECT_EQ(fake_retry.observed_base_delays_ms(), std::vector<int32_t>({10}));
+}
+
+TEST(RetryRunnerTest, NonPositiveTotalTimeoutDisablesDeadline) {
+  FakeRetryEnvironment fake_retry;
+  ScopedRetryTestHooks scoped_hooks(fake_retry.hooks());
+  int call_count = 0;
+  int32_t attempts = 0;
+
+  auto result = RetryRunner(RetryConfig{.num_retries = 2,
+                                        .min_wait_ms = 10,
+                                        .max_wait_ms = 10,
+                                        .total_timeout_ms = 0})
+                    .OnlyRetryOn(ErrorKind::kCommitFailed)
+                    .Run(
+                        [&]() -> Result<int> {
+                          ++call_count;
+                          fake_retry.Advance(FakeRetryEnvironment::Duration(100));
+                          if (call_count <= 2) {
+                            return CommitFailed("transient");
+                          }
+                          return 123;
+                        },
+                        &attempts);
+
+  EXPECT_THAT(result, IsOk());
+  EXPECT_EQ(*result, 123);
+  EXPECT_EQ(call_count, 3);
+  EXPECT_EQ(attempts, 3);
+  EXPECT_EQ(fake_retry.sleep_durations(), std::vector<FakeRetryEnvironment::Duration>(
+                                              {FakeRetryEnvironment::Duration(10),
+                                               FakeRetryEnvironment::Duration(10)}));
+  EXPECT_EQ(fake_retry.observed_base_delays_ms(), std::vector<int32_t>({10, 10}));
+}
+
+TEST(RetryRunnerTest, RetryDelayDoesNotExceedMaxWaitAfterJitter) {
+  FakeRetryEnvironment fake_retry;
+  fake_retry.SetJitterOffsetMs(100);
+  ScopedRetryTestHooks scoped_hooks(fake_retry.hooks());
+  int call_count = 0;
+  int32_t attempts = 0;
+
+  auto result = RetryRunner(RetryConfig{.num_retries = 1,
+                                        .min_wait_ms = 10,
+                                        .max_wait_ms = 10,
+                                        .total_timeout_ms = 0})
+                    .OnlyRetryOn(ErrorKind::kCommitFailed)
+                    .Run(
+                        [&]() -> Result<int> {
+                          ++call_count;
+                          if (call_count == 1) {
+                            return CommitFailed("transient");
+                          }
+                          return 321;
+                        },
+                        &attempts);
+
+  EXPECT_THAT(result, IsOk());
+  EXPECT_EQ(*result, 321);
+  EXPECT_EQ(call_count, 2);
+  EXPECT_EQ(attempts, 2);
+  EXPECT_EQ(fake_retry.sleep_durations(), std::vector<FakeRetryEnvironment::Duration>(
+                                              {FakeRetryEnvironment::Duration(10)}));
+  EXPECT_EQ(fake_retry.observed_base_delays_ms(), std::vector<int32_t>({10}));
 }
 
 TEST(RetryRunnerTest, MakeCommitRetryRunnerConfig) {
@@ -270,33 +624,6 @@ TEST(RetryRunnerTest, OnlyRetryOnMultipleErrorKinds) {
 
   EXPECT_THAT(result, IsOk());
   EXPECT_EQ(*result, 77);
-  EXPECT_EQ(call_count, 3);
-  EXPECT_EQ(attempts, 3);
-}
-
-TEST(RetryRunnerTest, DefaultRetryAllErrors) {
-  int call_count = 0;
-  int32_t attempts = 0;
-
-  auto result = RetryRunner(RetryConfig{.num_retries = 3,
-                                        .min_wait_ms = 1,
-                                        .max_wait_ms = 10,
-                                        .total_timeout_ms = 5000})
-                    .Run(
-                        [&]() -> Result<int> {
-                          ++call_count;
-                          if (call_count == 1) {
-                            return IOError("disk full");
-                          }
-                          if (call_count == 2) {
-                            return ValidationFailed("bad schema");
-                          }
-                          return 55;
-                        },
-                        &attempts);
-
-  EXPECT_THAT(result, IsOk());
-  EXPECT_EQ(*result, 55);
   EXPECT_EQ(call_count, 3);
   EXPECT_EQ(attempts, 3);
 }

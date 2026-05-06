@@ -19,18 +19,41 @@
 
 #pragma once
 
-#include <algorithm>
 #include <chrono>
-#include <cmath>
+#include <concepts>
+#include <cstdint>
+#include <functional>
+#include <initializer_list>
 #include <optional>
-#include <random>
-#include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "iceberg/iceberg_export.h"
 #include "iceberg/result.h"
 
 namespace iceberg {
+
+namespace detail {
+
+template <typename T>
+struct IsResult : std::false_type {};
+
+template <typename T>
+struct IsResult<Result<T>> : std::true_type {};
+
+template <typename T>
+concept ResultType = IsResult<std::remove_cvref_t<T>>::value;
+
+template <typename F>
+concept RetryTask = requires(F& f) {
+  { std::invoke(f) } -> ResultType;
+};
+
+template <typename F>
+using RetryTaskResult = std::remove_cvref_t<std::invoke_result_t<F&>>;
+
+}  // namespace detail
 
 /// \brief Configuration for retry behavior
 struct ICEBERG_EXPORT RetryConfig {
@@ -47,6 +70,9 @@ struct ICEBERG_EXPORT RetryConfig {
 };
 
 /// \brief Utility class for running tasks with retry logic
+///
+/// When retries are enabled (`num_retries > 0`), callers must explicitly configure
+/// retry policy with `OnlyRetryOn(...)` or `StopRetryOn(...)`.
 class ICEBERG_EXPORT RetryRunner {
  public:
   /// \brief Construct a RetryRunner with the given configuration
@@ -60,7 +86,8 @@ class ICEBERG_EXPORT RetryRunner {
   /// \note OnlyRetryOn takes priority over StopRetryOn. If OnlyRetryOn is set,
   /// StopRetryOn is ignored.
   RetryRunner& OnlyRetryOn(std::initializer_list<ErrorKind> error_kinds) {
-    only_retry_on_ = std::vector<ErrorKind>(error_kinds);
+    retry_policy_mode_ = RetryPolicyMode::kOnlyRetryOn;
+    retry_error_kinds_ = std::vector<ErrorKind>(error_kinds);
     return *this;
   }
 
@@ -68,10 +95,7 @@ class ICEBERG_EXPORT RetryRunner {
   ///
   /// \note OnlyRetryOn takes priority over StopRetryOn. If OnlyRetryOn is set,
   /// StopRetryOn is ignored.
-  RetryRunner& OnlyRetryOn(ErrorKind error_kind) {
-    only_retry_on_ = std::vector<ErrorKind>{error_kind};
-    return *this;
-  }
+  RetryRunner& OnlyRetryOn(ErrorKind error_kind) { return OnlyRetryOn({error_kind}); }
 
   /// \brief Specify error types that should stop retries immediately.
   ///
@@ -81,18 +105,35 @@ class ICEBERG_EXPORT RetryRunner {
   /// \note OnlyRetryOn takes priority over StopRetryOn. If OnlyRetryOn is set,
   /// StopRetryOn is ignored.
   RetryRunner& StopRetryOn(std::initializer_list<ErrorKind> error_kinds) {
-    stop_retry_on_ = std::vector<ErrorKind>(error_kinds);
+    if (retry_policy_mode_ == RetryPolicyMode::kOnlyRetryOn) {
+      return *this;
+    }
+
+    retry_policy_mode_ = RetryPolicyMode::kStopRetryOn;
+    retry_error_kinds_ = std::vector<ErrorKind>(error_kinds);
     return *this;
   }
 
+  /// \brief Specify a single error type that should stop retries immediately.
+  ///
+  /// \note OnlyRetryOn takes priority over StopRetryOn. If OnlyRetryOn is set,
+  /// StopRetryOn is ignored.
+  RetryRunner& StopRetryOn(ErrorKind error_kind) { return StopRetryOn({error_kind}); }
+
   /// \brief Run a task that returns a Result<T>
   ///
+  /// When `num_retries > 0`, the retry policy must be configured explicitly via
+  /// `OnlyRetryOn(...)` or `StopRetryOn(...)`.
+  ///
   /// TODO: Replace attempt_counter with a metrics reporter once it is available.
-  template <typename F, typename T = typename std::invoke_result_t<F>::value_type>
-  Result<T> Run(F&& task, int32_t* attempt_counter = nullptr) {
-    if (config_.num_retries < 0) {
-      return InvalidArgument("num_retries must be non-negative, got {}",
-                             config_.num_retries);
+  template <typename F>
+    requires detail::RetryTask<F>
+  auto Run(F&& task, int32_t* attempt_counter = nullptr) -> detail::RetryTaskResult<F> {
+    using TaskResult = detail::RetryTaskResult<F>;
+
+    const auto validation = ValidateConfig();
+    if (!validation.has_value()) {
+      return TaskResult(std::unexpected(validation.error()));
     }
 
     const auto deadline = ComputeDeadline();
@@ -105,7 +146,7 @@ class ICEBERG_EXPORT RetryRunner {
         *attempt_counter = attempt;
       }
 
-      auto result = task();
+      auto result = std::invoke(task);
       if (result.has_value()) {
         return result;
       }
@@ -121,89 +162,38 @@ class ICEBERG_EXPORT RetryRunner {
   }
 
  private:
+  enum class RetryPolicyMode {
+    // No retry policy was selected; invalid when retries are enabled.
+    kUnset,
+    // Retry only errors listed in retry_error_kinds_.
+    kOnlyRetryOn,
+    // Retry all errors except those listed in retry_error_kinds_.
+    kStopRetryOn,
+  };
+
   using Clock = std::chrono::steady_clock;
   using Duration = std::chrono::milliseconds;
   using TimePoint = Clock::time_point;
 
-  std::optional<TimePoint> ComputeDeadline() const {
-    if (config_.total_timeout_ms <= 0) {
-      return std::nullopt;
-    }
-    return Clock::now() + Duration(config_.total_timeout_ms);
-  }
-
-  bool HasTimedOut(const std::optional<TimePoint>& deadline) const {
-    return deadline.has_value() && Clock::now() >= *deadline;
-  }
+  /// \brief Validate retry counts, timing bounds, and the selected retry policy.
+  Status ValidateConfig() const;
+  std::optional<TimePoint> ComputeDeadline() const;
+  bool HasTimedOut(const std::optional<TimePoint>& deadline) const;
 
   /// \brief Check if the given error kind should trigger a retry.
-  bool ShouldRetry(ErrorKind kind) const {
-    if (!only_retry_on_.empty()) {
-      return std::ranges::any_of(only_retry_on_,
-                                 [kind](ErrorKind k) { return kind == k; });
-    }
-
-    if (!stop_retry_on_.empty()) {
-      return !std::ranges::any_of(stop_retry_on_,
-                                  [kind](ErrorKind k) { return kind == k; });
-    }
-
-    return true;
-  }
-
+  bool ShouldRetry(ErrorKind kind) const;
   bool CanRetry(ErrorKind kind, int32_t attempt, int32_t max_attempts,
-                const std::optional<TimePoint>& deadline) const {
-    return attempt < max_attempts && !HasTimedOut(deadline) && ShouldRetry(kind);
-  }
-
+                const std::optional<TimePoint>& deadline) const;
   std::optional<Duration> RetryDelayWithinBudget(
-      int32_t attempt, const std::optional<TimePoint>& deadline) const {
-    const auto delay = Duration(CalculateDelay(attempt));
-    if (!deadline.has_value()) {
-      return delay;
-    }
-
-    const auto now = Clock::now();
-    if (now >= *deadline) {
-      return std::nullopt;
-    }
-
-    const auto remaining = std::chrono::duration_cast<Duration>(*deadline - now);
-    if (remaining <= Duration::zero() || delay >= remaining) {
-      return std::nullopt;
-    }
-
-    return delay;
-  }
-
+      int32_t attempt, const std::optional<TimePoint>& deadline) const;
   bool WaitForNextAttempt(int32_t attempt,
-                          const std::optional<TimePoint>& deadline) const {
-    const auto delay = RetryDelayWithinBudget(attempt, deadline);
-    if (!delay.has_value()) {
-      return false;
-    }
-
-    std::this_thread::sleep_for(*delay);
-    return !HasTimedOut(deadline);
-  }
-
+                          const std::optional<TimePoint>& deadline) const;
   /// \brief Calculate delay with exponential backoff and jitter
-  int32_t CalculateDelay(int32_t attempt) const {
-    // Calculate base delay with exponential backoff
-    double base_delay = config_.min_wait_ms * std::pow(config_.scale_factor, attempt - 1);
-    int32_t delay_ms = static_cast<int32_t>(
-        std::min(base_delay, static_cast<double>(config_.max_wait_ms)));
-
-    static thread_local std::mt19937 gen(std::random_device{}());
-    int32_t jitter_range = std::max(1, delay_ms / 10);
-    std::uniform_int_distribution<> dis(0, jitter_range - 1);
-    delay_ms += dis(gen);
-    return std::max(1, delay_ms);
-  }
+  int32_t CalculateDelay(int32_t attempt) const;
 
   RetryConfig config_;
-  std::vector<ErrorKind> only_retry_on_;
-  std::vector<ErrorKind> stop_retry_on_;
+  RetryPolicyMode retry_policy_mode_ = RetryPolicyMode::kUnset;
+  std::vector<ErrorKind> retry_error_kinds_;
 };
 
 /// \brief Helper function to create a RetryRunner with table commit configuration
