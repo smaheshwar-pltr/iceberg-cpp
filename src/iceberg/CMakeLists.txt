@@ -36,6 +36,7 @@ set(ICEBERG_SOURCES
     expression/rewrite_not.cc
     expression/strict_metrics_evaluator.cc
     expression/term.cc
+    file_io.cc
     file_io_registry.cc
     file_reader.cc
     file_writer.cc
@@ -218,9 +219,9 @@ add_subdirectory(util)
 
 if(ICEBERG_BUILD_BUNDLE)
   set(ICEBERG_BUNDLE_SOURCES
-      arrow/arrow_fs_file_io.cc
+      arrow/arrow_io.cc
       arrow/s3/arrow_s3_file_io.cc
-      arrow/file_io_register.cc
+      arrow/arrow_io_register.cc
       arrow/metadata_column_util.cc
       avro/avro_data_util.cc
       avro/avro_direct_decoder.cc

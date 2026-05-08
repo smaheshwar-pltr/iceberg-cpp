@@ -19,7 +19,7 @@
 
 #pragma once
 
-/// \file iceberg/arrow/file_io_register.h
+/// \file iceberg/arrow/arrow_io_register.h
 /// \brief Provide functions to register Arrow FileIO implementations.
 
 #include "iceberg/iceberg_bundle_export.h"
