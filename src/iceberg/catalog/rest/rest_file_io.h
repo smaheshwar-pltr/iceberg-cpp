@@ -56,6 +56,6 @@ ICEBERG_REST_EXPORT Result<std::unique_ptr<FileIO>> MakeCatalogFileIO(
 ICEBERG_REST_EXPORT Result<std::shared_ptr<FileIO>> ResolveTableFileIO(
     const std::shared_ptr<FileIO>& catalog_io,
     const std::unordered_map<std::string, std::string>& catalog_props,
-    const std::string& warehouse, const LoadTableResult& result);
+    std::string_view warehouse, const LoadTableResult& result);
 
 }  // namespace iceberg::rest

@@ -129,7 +129,7 @@ std::unordered_map<std::string, std::string> MergeTableProperties(
 Result<std::shared_ptr<FileIO>> ResolveTableFileIO(
     const std::shared_ptr<FileIO>& catalog_io,
     const std::unordered_map<std::string, std::string>& catalog_props,
-    const std::string& warehouse, const LoadTableResult& result) {
+    std::string_view warehouse, const LoadTableResult& result) {
   if (result.config.empty() && result.storage_credentials.empty()) {
     return catalog_io;
   }
@@ -139,7 +139,7 @@ Result<std::shared_ptr<FileIO>> ResolveTableFileIO(
   if (!result.metadata_location.empty()) {
     cred = ResolveStorageCredential(result.storage_credentials, result.metadata_location);
   }
-  static const std::unordered_map<std::string, std::string> kEmpty;
+  const std::unordered_map<std::string, std::string> kEmpty;
   auto merged =
       MergeTableProperties(catalog_props, result.config, cred ? cred->config : kEmpty);
 
