@@ -99,7 +99,7 @@ if(TARGET iceberg::arrow_static)
   # AWS SDK C libraries (aws-c-common, etc.) which depend on platform-specific
   # system libraries. Without these, downstream consumers get unresolved
   # symbols at link time.
-  # Reference: Arrow's ArrowConfig.cmake.in handles this identically.
+  # Reference: Arrow's ArrowConfig.cmake.in handles this similarly.
   # https://github.com/apache/arrow/blob/main/cpp/src/arrow/ArrowConfig.cmake.in
   if(ICEBERG_S3)
     if(APPLE)
@@ -110,7 +110,8 @@ if(TARGET iceberg::arrow_static)
       target_link_libraries(Arrow::arrow_bundled_dependencies
                             INTERFACE ${SECURITY})
       find_library(NETWORK Network)
-      target_link_libraries(Arrow::arrow_bundled_dependencies INTERFACE ${NETWORK})
+      target_link_libraries(Arrow::arrow_bundled_dependencies
+                            INTERFACE ${NETWORK})
     elseif(WIN32)
       target_link_libraries(Arrow::arrow_bundled_dependencies
                             INTERFACE "winhttp.lib"
