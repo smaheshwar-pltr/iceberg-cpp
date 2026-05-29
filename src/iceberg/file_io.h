@@ -27,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "iceberg/iceberg_export.h"
 #include "iceberg/result.h"
@@ -163,6 +164,16 @@ class ICEBERG_EXPORT FileIO {
   virtual Status DeleteFile(const std::string& file_location) {
     return NotImplemented("DeleteFile not implemented");
   }
+
+  /// \brief Delete files at the given locations.
+  ///
+  /// Implementations that can delete multiple files efficiently should override this
+  /// method. The default implementation deletes files sequentially using DeleteFile
+  /// and returns the first error encountered.
+  ///
+  /// \param file_locations The locations of the files to delete.
+  /// \return void if all deletes succeed, or an error code if any delete fails.
+  virtual Status DeleteFiles(const std::vector<std::string>& file_locations);
 
  private:
   friend class FileIORegistry;
