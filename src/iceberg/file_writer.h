@@ -30,6 +30,7 @@
 #include "iceberg/arrow_c_data.h"
 #include "iceberg/file_format.h"
 #include "iceberg/metrics.h"
+#include "iceberg/metrics_config.h"
 #include "iceberg/result.h"
 #include "iceberg/type_fwd.h"
 #include "iceberg/util/config.h"
@@ -59,6 +60,9 @@ class ICEBERG_EXPORT WriterProperties : public ConfigBase<WriterProperties> {
                                                        "zstd"};
   inline static Entry<std::string> kParquetCompressionLevel{
       "write.parquet.compression-level", ""};
+  /// \brief Maximum number of rows in each Parquet row group.
+  inline static Entry<int64_t> kParquetMaxRowGroupRows{"write.parquet.max-row-group-rows",
+                                                       1024 * 1024};
 
   /// TODO(gangwu): add table properties with write.avro|parquet|orc.*
 
@@ -77,6 +81,8 @@ struct ICEBERG_EXPORT WriterOptions {
   std::shared_ptr<class FileIO> io;
   /// \brief Metadata to write to the file.
   std::unordered_map<std::string, std::string> metadata;
+  /// \brief Metrics configuration.
+  std::shared_ptr<MetricsConfig> metrics_config = MetricsConfig::Default();
   /// \brief Format-specific or implementation-specific properties.
   WriterProperties properties;
 };

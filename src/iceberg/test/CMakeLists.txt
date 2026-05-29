@@ -124,14 +124,18 @@ add_iceberg_test(util_test
                  data_file_set_test.cc
                  decimal_test.cc
                  endian_test.cc
+                 file_io_test.cc
                  formatter_test.cc
                  lazy_test.cc
                  location_util_test.cc
+                 math_util_internal_test.cc
                  roaring_position_bitmap_test.cc
                  position_delete_index_test.cc
+                 position_delete_range_consumer_test.cc
                  retry_util_test.cc
                  string_util_test.cc
                  struct_like_set_test.cc
+                 temporal_util_test.cc
                  transform_util_test.cc
                  truncate_util_test.cc
                  url_encoder_test.cc
@@ -142,7 +146,8 @@ add_iceberg_test(puffin_test
                  USE_DATA
                  SOURCES
                  puffin_format_test.cc
-                 puffin_json_test.cc)
+                 puffin_json_test.cc
+                 puffin_reader_writer_test.cc)
 
 if(ICEBERG_BUILD_BUNDLE)
   add_iceberg_test(avro_test
@@ -180,6 +185,7 @@ if(ICEBERG_BUILD_BUNDLE)
                    delete_file_index_test.cc
                    manifest_group_test.cc
                    manifest_list_versions_test.cc
+                   manifest_merge_manager_test.cc
                    manifest_reader_stats_test.cc
                    manifest_reader_test.cc
                    manifest_writer_versions_test.cc
@@ -188,7 +194,9 @@ if(ICEBERG_BUILD_BUNDLE)
   add_iceberg_test(parquet_test
                    USE_BUNDLE
                    SOURCES
+                   metrics_test_base.cc
                    parquet_data_test.cc
+                   parquet_metrics_test.cc
                    parquet_schema_test.cc
                    parquet_test.cc)
 
@@ -205,6 +213,7 @@ if(ICEBERG_BUILD_BUNDLE)
                    SOURCES
                    expire_snapshots_test.cc
                    fast_append_test.cc
+                   manifest_filter_manager_test.cc
                    name_mapping_update_test.cc
                    snapshot_manager_test.cc
                    transaction_test.cc
@@ -219,8 +228,11 @@ if(ICEBERG_BUILD_BUNDLE)
   add_iceberg_test(data_test
                    USE_BUNDLE
                    SOURCES
+                   arrow_c_data_util_test.cc
                    data_writer_test.cc
-                   delete_loader_test.cc)
+                   delete_filter_test.cc
+                   delete_loader_test.cc
+                   file_scan_task_reader_test.cc)
 
 endif()
 

@@ -41,6 +41,7 @@ configure_file(
 iceberg_include_dir = include_directories('..')
 iceberg_sources = files(
     'arrow_c_data_guard_internal.cc',
+    'arrow_c_data_util.cc',
     'catalog/memory/in_memory_catalog.cc',
     'delete_file_index.cc',
     'expression/aggregate.cc',
@@ -67,8 +68,10 @@ iceberg_sources = files(
     'location_provider.cc',
     'manifest/manifest_adapter.cc',
     'manifest/manifest_entry.cc',
+    'manifest/manifest_filter_manager.cc',
     'manifest/manifest_group.cc',
     'manifest/manifest_list.cc',
+    'manifest/manifest_merge_manager.cc',
     'manifest/manifest_reader.cc',
     'manifest/manifest_util.cc',
     'manifest/manifest_writer.cc',
@@ -142,15 +145,20 @@ iceberg_sources = files(
 
 iceberg_data_sources = files(
     'data/data_writer.cc',
+    'data/delete_filter.cc',
     'data/delete_loader.cc',
     'data/equality_delete_writer.cc',
+    'data/file_scan_task_reader.cc',
     'data/position_delete_writer.cc',
     'data/writer.cc',
     'deletes/position_delete_index.cc',
+    'deletes/position_delete_range_consumer.cc',
     'deletes/roaring_position_bitmap.cc',
     'puffin/file_metadata.cc',
     'puffin/json_serde.cc',
     'puffin/puffin_format.cc',
+    'puffin/puffin_reader.cc',
+    'puffin/puffin_writer.cc',
 )
 
 # CRoaring does not export symbols, so on Windows it must
@@ -252,6 +260,7 @@ install_headers(
         'table.h',
         'table_identifier.h',
         'table_metadata.h',
+        'table_properties.h',
         'table_requirement.h',
         'table_requirements.h',
         'table_scan.h',

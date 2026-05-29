@@ -37,6 +37,7 @@ install_headers(
         'retry_util.h',
         'snapshot_util.h',
         'string_util.h',
+        'struct_like_set.h',
         'temporal_util.h',
         'timepoint.h',
         'transform_util.h',
