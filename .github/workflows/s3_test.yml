@@ -26,6 +26,7 @@ on:
     tags:
       - '**'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ${{ github.repository }}-${{ github.head_ref || github.sha }}-${{ github.workflow }}
@@ -39,6 +40,7 @@ env:
 
 jobs:
   s3-minio:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: S3 (${{ matrix.title }})
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 35
@@ -73,6 +75,12 @@ jobs:
         run: |
           echo "CC=${{ matrix.CC }}" >> $GITHUB_ENV
           echo "CXX=${{ matrix.CXX }}" >> $GITHUB_ENV
+      - name: Install fmt on macOS
+        if: ${{ startsWith(matrix.runs-on, 'macos') }}
+        shell: bash
+        run: |
+          brew install fmt
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix fmt):${CMAKE_PREFIX_PATH:-}" >> "${GITHUB_ENV}"
       - name: Start MinIO
         shell: bash
         run: bash ci/scripts/start_minio.sh

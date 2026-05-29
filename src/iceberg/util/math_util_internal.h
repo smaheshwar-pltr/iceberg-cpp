@@ -19,16 +19,29 @@
 
 #pragma once
 
-/// \file iceberg/arrow/arrow_io_register.h
-/// \brief Provide functions to register Arrow FileIO implementations.
+#include <cstdint>
+#include <limits>
 
-#include "iceberg/iceberg_bundle_export.h"
+#include "iceberg/result.h"
+#include "iceberg/util/int128.h"
 
-namespace iceberg::arrow {
+namespace iceberg {
 
-/// \brief Register built-in Arrow FileIO implementations into the FileIORegistry.
-///
-/// This operation is idempotent and safe to call multiple times.
-ICEBERG_BUNDLE_EXPORT void EnsureArrowFileIOsRegistered();
+inline constexpr int64_t FloorDiv(int64_t dividend, int64_t divisor) {
+  const auto quotient = dividend / divisor;
+  if ((dividend ^ divisor) < 0 && quotient * divisor != dividend) {
+    return quotient - 1;
+  }
+  return quotient;
+}
 
-}  // namespace iceberg::arrow
+inline Result<int64_t> MultiplyExact(int64_t lhs, int64_t rhs) {
+  const auto result = static_cast<int128_t>(lhs) * static_cast<int128_t>(rhs);
+  if (result > std::numeric_limits<int64_t>::max() ||
+      result < std::numeric_limits<int64_t>::min()) [[unlikely]] {
+    return InvalidArgument("Long overflow when multiplying {} by {}", lhs, rhs);
+  }
+  return static_cast<int64_t>(result);
+}
+
+}  // namespace iceberg

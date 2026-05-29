@@ -18,6 +18,7 @@
 set(ICEBERG_INCLUDES "$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/src>"
                      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>")
 set(ICEBERG_SOURCES
+    arrow_c_data_util.cc
     arrow_c_data_guard_internal.cc
     catalog/memory/in_memory_catalog.cc
     delete_file_index.cc
@@ -45,8 +46,10 @@ set(ICEBERG_SOURCES
     location_provider.cc
     manifest/manifest_adapter.cc
     manifest/manifest_entry.cc
+    manifest/manifest_filter_manager.cc
     manifest/manifest_group.cc
     manifest/manifest_list.cc
+    manifest/manifest_merge_manager.cc
     manifest/manifest_reader.cc
     manifest/manifest_util.cc
     manifest/manifest_writer.cc
@@ -161,15 +164,20 @@ add_iceberg_lib(iceberg
 
 set(ICEBERG_DATA_SOURCES
     data/data_writer.cc
+    data/delete_filter.cc
     data/delete_loader.cc
     data/equality_delete_writer.cc
+    data/file_scan_task_reader.cc
     data/position_delete_writer.cc
     data/writer.cc
     deletes/position_delete_index.cc
+    deletes/position_delete_range_consumer.cc
     deletes/roaring_position_bitmap.cc
     puffin/file_metadata.cc
     puffin/json_serde.cc
-    puffin/puffin_format.cc)
+    puffin/puffin_format.cc
+    puffin/puffin_reader.cc
+    puffin/puffin_writer.cc)
 
 set(ICEBERG_DATA_STATIC_BUILD_INTERFACE_LIBS)
 set(ICEBERG_DATA_SHARED_BUILD_INTERFACE_LIBS)
@@ -219,9 +227,10 @@ add_subdirectory(util)
 
 if(ICEBERG_BUILD_BUNDLE)
   set(ICEBERG_BUNDLE_SOURCES
+      arrow/arrow_c_data_util.cc
       arrow/arrow_io.cc
       arrow/s3/arrow_s3_file_io.cc
-      arrow/arrow_io_register.cc
+      arrow/arrow_register.cc
       arrow/metadata_column_util.cc
       avro/avro_data_util.cc
       avro/avro_direct_decoder.cc
@@ -233,6 +242,7 @@ if(ICEBERG_BUILD_BUNDLE)
       avro/avro_schema_util.cc
       avro/avro_stream_internal.cc
       parquet/parquet_data_util.cc
+      parquet/parquet_metrics.cc
       parquet/parquet_reader.cc
       parquet/parquet_register.cc
       parquet/parquet_schema_util.cc

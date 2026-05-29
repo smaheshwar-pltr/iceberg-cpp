@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "iceberg/expression/literal.h"
+#include "iceberg/type.h"
 #include "iceberg/util/checked_cast.h"
 
 namespace iceberg {
@@ -167,20 +168,23 @@ Literal TruncateLiteralImpl<TypeId::kBinary>(const Literal& literal, int32_t wid
 }
 
 template <TypeId type_id>
-Result<Literal> TruncateLiteralMaxImpl(const Literal& literal, int32_t width) = delete;
+Result<std::optional<Literal>> TruncateLiteralMaxImpl(const Literal& literal,
+                                                      int32_t width) = delete;
 
 template <>
-Result<Literal> TruncateLiteralMaxImpl<TypeId::kString>(const Literal& literal,
-                                                        int32_t width) {
+Result<std::optional<Literal>> TruncateLiteralMaxImpl<TypeId::kString>(
+    const Literal& literal, int32_t width) {
   const auto& str = std::get<std::string>(literal.value());
-  ICEBERG_ASSIGN_OR_RAISE(std::string truncated,
-                          TruncateUtils::TruncateUTF8Max(str, width));
-  return Literal::String(std::move(truncated));
+  ICEBERG_ASSIGN_OR_RAISE(auto truncated, TruncateUtils::TruncateUTF8Max(str, width));
+  if (!truncated.has_value()) {
+    return std::nullopt;
+  }
+  return Literal::String(std::move(*truncated));
 }
 
 template <>
-Result<Literal> TruncateLiteralMaxImpl<TypeId::kBinary>(const Literal& literal,
-                                                        int32_t width) {
+Result<std::optional<Literal>> TruncateLiteralMaxImpl<TypeId::kBinary>(
+    const Literal& literal, int32_t width) {
   const auto& data = std::get<std::vector<uint8_t>>(literal.value());
   if (static_cast<int32_t>(data.size()) <= width) {
     return literal;
@@ -194,12 +198,13 @@ Result<Literal> TruncateLiteralMaxImpl<TypeId::kBinary>(const Literal& literal,
       return Literal::Binary(std::move(truncated));
     }
   }
-  return InvalidArgument("Cannot truncate upper bound for binary: all bytes are 0xFF");
+  return std::nullopt;
 }
 
 }  // namespace
 
-Result<std::string> TruncateUtils::TruncateUTF8Max(const std::string& source, size_t L) {
+Result<std::optional<std::string>> TruncateUtils::TruncateUTF8Max(
+    const std::string& source, size_t L) {
   std::string truncated = TruncateUTF8(source, L);
   if (truncated == source) {
     return truncated;
@@ -236,8 +241,7 @@ Result<std::string> TruncateUtils::TruncateUTF8Max(const std::string& source, si
     }
     last_cp_start = cp_start;
   }
-  return InvalidArgument(
-      "Cannot truncate upper bound for string: all code points are 0x10FFFF");
+  return std::nullopt;
 }
 
 Decimal TruncateUtils::TruncateDecimal(const Decimal& decimal, int32_t width) {
@@ -274,7 +278,8 @@ Result<Literal> TruncateUtils::TruncateLiteral(const Literal& literal, int32_t w
   case TYPE_ID:                                \
     return TruncateLiteralMaxImpl<TYPE_ID>(literal, width);
 
-Result<Literal> TruncateUtils::TruncateLiteralMax(const Literal& literal, int32_t width) {
+Result<std::optional<Literal>> TruncateUtils::TruncateLiteralMax(const Literal& literal,
+                                                                 int32_t width) {
   if (literal.IsNull()) [[unlikely]] {
     // Return null as is
     return literal;
@@ -290,6 +295,28 @@ Result<Literal> TruncateUtils::TruncateLiteralMax(const Literal& literal, int32_
     default:
       return NotSupported("Truncate max is not supported for type: {}",
                           literal.type()->ToString());
+  }
+}
+
+Result<Literal> TruncateUtils::TruncateLowerBound(const PrimitiveType& type,
+                                                  const Literal& value, int32_t length) {
+  switch (type.type_id()) {
+    case TypeId::kString:
+    case TypeId::kBinary:
+      return TruncateLiteral(value, length);
+    default:
+      return value;
+  }
+}
+
+Result<std::optional<Literal>> TruncateUtils::TruncateUpperBound(
+    const PrimitiveType& type, const Literal& value, int32_t length) {
+  switch (type.type_id()) {
+    case TypeId::kString:
+    case TypeId::kBinary:
+      return TruncateLiteralMax(value, length);
+    default:
+      return value;
   }
 }
 
