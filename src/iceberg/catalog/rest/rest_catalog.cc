@@ -166,7 +166,9 @@ Result<std::shared_ptr<RestCatalog>> RestCatalog::Make(
   // Get snapshot loading mode
   ICEBERG_ASSIGN_OR_RAISE(auto snapshot_mode, final_config.SnapshotLoadingMode());
 
-  auto client = std::make_unique<HttpClient>(final_config.ExtractHeaders());
+  auto default_headers = final_config.ExtractHeaders();
+  default_headers.emplace(kHeaderAccessDelegation, kAccessDelegationVendedCredentials);
+  auto client = std::make_unique<HttpClient>(std::move(default_headers));
   ICEBERG_ASSIGN_OR_RAISE(auto catalog_session,
                           auth_manager->CatalogSession(*client, final_config.configs()));
 
@@ -361,8 +363,13 @@ Result<std::shared_ptr<Table>> RestCatalog::CreateTable(
   ICEBERG_ASSIGN_OR_RAISE(auto result,
                           CreateTableInternal(identifier, schema, spec, order, location,
                                               properties, /*stage_create=*/false));
+  ICEBERG_ASSIGN_OR_RAISE(
+      auto table_io,
+      ResolveTableFileIO(file_io_, config_.configs(),
+                         config_.Get(RestCatalogProperties::kWarehouse), result));
   return Table::Make(identifier, std::move(result.metadata),
-                     std::move(result.metadata_location), file_io_, shared_from_this());
+                     std::move(result.metadata_location), std::move(table_io),
+                     shared_from_this());
 }
 
 Result<std::shared_ptr<Table>> RestCatalog::UpdateTable(
@@ -404,10 +411,14 @@ Result<std::shared_ptr<Transaction>> RestCatalog::StageCreateTable(
   ICEBERG_ASSIGN_OR_RAISE(auto result,
                           CreateTableInternal(identifier, schema, spec, order, location,
                                               properties, /*stage_create=*/true));
+  ICEBERG_ASSIGN_OR_RAISE(
+      auto table_io,
+      ResolveTableFileIO(file_io_, config_.configs(),
+                         config_.Get(RestCatalogProperties::kWarehouse), result));
   ICEBERG_ASSIGN_OR_RAISE(auto staged_table,
                           StagedTable::Make(identifier, std::move(result.metadata),
-                                            std::move(result.metadata_location), file_io_,
-                                            shared_from_this()));
+                                            std::move(result.metadata_location),
+                                            std::move(table_io), shared_from_this()));
   return Transaction::Make(std::move(staged_table), TransactionKind::kCreate);
 }
 
@@ -474,9 +485,13 @@ Result<std::shared_ptr<Table>> RestCatalog::LoadTable(const TableIdentifier& ide
   ICEBERG_ASSIGN_OR_RAISE(const auto body, LoadTableInternal(identifier));
   ICEBERG_ASSIGN_OR_RAISE(auto json, FromJsonString(body));
   ICEBERG_ASSIGN_OR_RAISE(auto load_result, LoadTableResultFromJson(json));
-  /// FIXME: support per-table FileIO creation
+
+  ICEBERG_ASSIGN_OR_RAISE(
+      auto table_io,
+      ResolveTableFileIO(file_io_, config_.configs(),
+                         config_.Get(RestCatalogProperties::kWarehouse), load_result));
   return Table::Make(identifier, std::move(load_result.metadata),
-                     std::move(load_result.metadata_location), file_io_,
+                     std::move(load_result.metadata_location), std::move(table_io),
                      shared_from_this());
 }
 
@@ -498,8 +513,12 @@ Result<std::shared_ptr<Table>> RestCatalog::RegisterTable(
 
   ICEBERG_ASSIGN_OR_RAISE(auto json, FromJsonString(response.body()));
   ICEBERG_ASSIGN_OR_RAISE(auto load_result, LoadTableResultFromJson(json));
+  ICEBERG_ASSIGN_OR_RAISE(
+      auto table_io,
+      ResolveTableFileIO(file_io_, config_.configs(),
+                         config_.Get(RestCatalogProperties::kWarehouse), load_result));
   return Table::Make(identifier, std::move(load_result.metadata),
-                     std::move(load_result.metadata_location), file_io_,
+                     std::move(load_result.metadata_location), std::move(table_io),
                      shared_from_this());
 }
 

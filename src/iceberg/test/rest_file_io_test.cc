@@ -59,9 +59,20 @@ TEST(RestFileIOTest, DetectBuiltinKindRejectsUnsupportedScheme) {
   EXPECT_THAT(result, HasErrorMessage("not supported for automatic FileIO resolution"));
 }
 
-TEST(RestFileIOTest, MakeCatalogFileIOMissingImplAndWarehouse) {
+TEST(RestFileIOTest, MakeCatalogFileIOFallsBackToLocalWithoutImplOrWarehouse) {
+  bool local_factory_called = false;
+  FileIORegistry::Register(
+      std::string(FileIORegistry::kArrowLocalFileIO),
+      [&local_factory_called](
+          const std::unordered_map<std::string, std::string>& /*properties*/)
+          -> Result<std::unique_ptr<FileIO>> {
+        local_factory_called = true;
+        return std::make_unique<MockFileIO>();
+      });
+
   auto result = MakeCatalogFileIO(RestCatalogProperties::default_properties());
-  EXPECT_THAT(result, IsError(ErrorKind::kInvalidArgument));
+  ASSERT_THAT(result, IsOk());
+  EXPECT_TRUE(local_factory_called);
 }
 
 TEST(RestFileIOTest, MakeCatalogFileIORejectsIncompatibleWarehouse) {

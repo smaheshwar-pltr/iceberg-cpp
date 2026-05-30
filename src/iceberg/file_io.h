@@ -26,6 +26,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "iceberg/iceberg_export.h"
@@ -118,6 +119,14 @@ class ICEBERG_EXPORT FileIO {
   FileIO() = default;
   virtual ~FileIO() = default;
 
+  /// \brief Returns the configuration properties used to initialize this FileIO.
+  ///
+  /// Engines that need to configure their own storage access (e.g., for credential
+  /// vending) can read these properties to obtain the resolved credentials.
+  const std::unordered_map<std::string, std::string>& properties() const {
+    return properties_;
+  }
+
   /// \brief Create an input file handle for the given location.
   virtual Result<std::unique_ptr<InputFile>> NewInputFile(std::string file_location);
 
@@ -165,6 +174,10 @@ class ICEBERG_EXPORT FileIO {
   /// \param file_locations The locations of the files to delete.
   /// \return void if all deletes succeed, or an error code if any delete fails.
   virtual Status DeleteFiles(const std::vector<std::string>& file_locations);
+
+ private:
+  friend class FileIORegistry;
+  std::unordered_map<std::string, std::string> properties_;
 };
 
 }  // namespace iceberg
