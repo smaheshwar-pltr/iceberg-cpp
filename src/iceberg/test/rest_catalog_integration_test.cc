@@ -486,4 +486,66 @@ TEST_F(RestCatalogIntegrationTest, LoadTableWithSnapshotModeRefs) {
   EXPECT_FALSE(loaded->metadata()->schemas.empty());
 }
 
+// -- Credential vending --
+
+TEST_F(RestCatalogIntegrationTest, LoadTableVendsCredentials) {
+  Namespace ns{.levels = {"test_load_vend"}};
+  ICEBERG_UNWRAP_OR_FAIL(auto catalog, CreateCatalogAndNamespace(ns));
+
+  TableIdentifier table_id{.ns = ns, .name = "vend_table"};
+  ASSERT_THAT(CreateDefaultTable(catalog, table_id), IsOk());
+
+  ICEBERG_UNWRAP_OR_FAIL(auto loaded, catalog->LoadTable(table_id));
+  const auto& props = loaded->io()->properties();
+  // Values must match the dummy credentials configured in docker-compose.yml
+  EXPECT_EQ(props.at("s3.access-key-id"), "dummy-access-key");
+  EXPECT_EQ(props.at("s3.secret-access-key"), "dummy-secret-key");
+}
+
+TEST_F(RestCatalogIntegrationTest, CreateTableVendsCredentials) {
+  Namespace ns{.levels = {"test_create_vend"}};
+  ICEBERG_UNWRAP_OR_FAIL(auto catalog, CreateCatalogAndNamespace(ns));
+
+  TableIdentifier table_id{.ns = ns, .name = "created_vend"};
+  ICEBERG_UNWRAP_OR_FAIL(auto table, CreateDefaultTable(catalog, table_id));
+
+  const auto& props = table->io()->properties();
+  EXPECT_EQ(props.at("s3.access-key-id"), "dummy-access-key");
+  EXPECT_EQ(props.at("s3.secret-access-key"), "dummy-secret-key");
+}
+
+TEST_F(RestCatalogIntegrationTest, RegisterTableVendsCredentials) {
+  Namespace ns{.levels = {"test_register_vend"}};
+  ICEBERG_UNWRAP_OR_FAIL(auto catalog, CreateCatalogAndNamespace(ns));
+
+  TableIdentifier orig_id{.ns = ns, .name = "orig_table"};
+  ICEBERG_UNWRAP_OR_FAIL(auto orig, CreateDefaultTable(catalog, orig_id));
+  std::string metadata_location(orig->metadata_file_location());
+
+  ASSERT_THAT(catalog->DropTable(orig_id, /*purge=*/false), IsOk());
+
+  TableIdentifier new_id{.ns = ns, .name = "registered_vend"};
+  ICEBERG_UNWRAP_OR_FAIL(auto registered,
+                         catalog->RegisterTable(new_id, metadata_location));
+
+  const auto& props = registered->io()->properties();
+  EXPECT_EQ(props.at("s3.access-key-id"), "dummy-access-key");
+  EXPECT_EQ(props.at("s3.secret-access-key"), "dummy-secret-key");
+}
+
+TEST_F(RestCatalogIntegrationTest, StageCreateTableVendsCredentials) {
+  Namespace ns{.levels = {"test_stage_vend"}};
+  ICEBERG_UNWRAP_OR_FAIL(auto catalog, CreateCatalogAndNamespace(ns));
+
+  TableIdentifier table_id{.ns = ns, .name = "staged_vend"};
+  ICEBERG_UNWRAP_OR_FAIL(
+      auto txn,
+      catalog->StageCreateTable(table_id, DefaultSchema(), PartitionSpec::Unpartitioned(),
+                                SortOrder::Unsorted(), "", {}));
+
+  const auto& props = txn->table()->io()->properties();
+  EXPECT_EQ(props.at("s3.access-key-id"), "dummy-access-key");
+  EXPECT_EQ(props.at("s3.secret-access-key"), "dummy-secret-key");
+}
+
 }  // namespace iceberg::rest
