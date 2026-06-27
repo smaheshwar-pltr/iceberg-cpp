@@ -156,6 +156,21 @@ TEST_F(ArrowS3FileIOTest, StoresCredentials) {
   EXPECT_EQ(credentialed->credentials(), credentials);
 }
 
+TEST_F(ArrowS3FileIOTest, PropertiesExposeFileIOConfiguration) {
+  // REST servers typically return vended credentials in a table's config, which
+  // becomes the FileIO's configuration; properties() exposes it to engines.
+  auto result = MakeS3FileIO({{std::string(S3Properties::kClientRegion), "us-east-1"},
+                              {std::string(S3Properties::kAccessKeyId), "key"},
+                              {std::string(S3Properties::kSecretAccessKey), "secret"}});
+  ASSERT_THAT(result, IsOk());
+
+  // No downcast needed: properties() is a FileIO method.
+  const auto& properties = result.value()->properties();
+  EXPECT_EQ(properties.at(std::string(S3Properties::kClientRegion)), "us-east-1");
+  EXPECT_EQ(properties.at(std::string(S3Properties::kAccessKeyId)), "key");
+  EXPECT_EQ(properties.at(std::string(S3Properties::kSecretAccessKey)), "secret");
+}
+
 TEST_F(ArrowS3FileIOTest, RejectsCredentialPrefix) {
   auto result = MakeS3FileIO({});
   ASSERT_THAT(result, IsOk());
