@@ -81,6 +81,7 @@ class ICEBERG_REST_EXPORT RestCatalog final
   Result<std::shared_ptr<FileIO>> TableFileIO(
       const SessionContext& context,
       const std::unordered_map<std::string, std::string>& table_config,
+      std::string_view metadata_location,
       const std::vector<StorageCredential>& storage_credentials) const;
 
   Result<std::vector<Namespace>> ListNamespaces(const Namespace& ns,

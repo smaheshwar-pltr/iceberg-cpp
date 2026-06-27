@@ -47,10 +47,14 @@ ICEBERG_REST_EXPORT std::string_view BuiltinFileIOName(BuiltinFileIOKind kind);
 ICEBERG_REST_EXPORT Result<std::unique_ptr<FileIO>> MakeCatalogFileIO(
     const RestCatalogProperties& config);
 
-/// \brief Build the configured table FileIO and apply storage credentials if present.
+/// \brief Build the table FileIO and apply storage credentials if present.
+///
+/// When no "io-impl" is configured, the implementation is inferred from the
+/// \p metadata_location scheme, then the "warehouse" scheme.
 ICEBERG_REST_EXPORT Result<std::unique_ptr<FileIO>> MakeTableFileIO(
     const std::unordered_map<std::string, std::string>& catalog_config,
     const std::unordered_map<std::string, std::string>& table_config,
+    std::string_view metadata_location,
     const std::vector<StorageCredential>& storage_credentials);
 
 }  // namespace iceberg::rest

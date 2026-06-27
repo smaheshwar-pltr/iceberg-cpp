@@ -84,12 +84,14 @@ Result<std::unique_ptr<FileIO>> MakeCatalogFileIO(const RestCatalogProperties& c
 
   if (io_impl.empty()) {
     if (warehouse.empty()) {
-      return InvalidArgument(R"("{}" or "{}" property is required to create FileIO)",
-                             RestCatalogProperties::kIOImpl.key(),
-                             RestCatalogProperties::kWarehouse.key());
+      // No io-impl or warehouse configured. Fall back to a local FileIO so the
+      // catalog can still be created; remote access for individual tables is
+      // resolved per table (e.g. from vended storage credentials).
+      io_impl = std::string(FileIORegistry::kArrowLocalFileIO);
+    } else {
+      ICEBERG_ASSIGN_OR_RAISE(const auto detected_kind, DetectBuiltinFileIO(warehouse));
+      io_impl = std::string(BuiltinFileIOName(detected_kind));
     }
-    ICEBERG_ASSIGN_OR_RAISE(const auto detected_kind, DetectBuiltinFileIO(warehouse));
-    io_impl = std::string(BuiltinFileIOName(detected_kind));
   }
 
   if (!warehouse.empty() && IsBuiltinImpl(io_impl)) {
@@ -110,19 +112,27 @@ Result<std::unique_ptr<FileIO>> MakeCatalogFileIO(const RestCatalogProperties& c
 Result<std::unique_ptr<FileIO>> MakeTableFileIO(
     const std::unordered_map<std::string, std::string>& catalog_config,
     const std::unordered_map<std::string, std::string>& table_config,
+    std::string_view metadata_location,
     const std::vector<StorageCredential>& storage_credentials) {
   const auto default_properties = MergeFileIOProperties(catalog_config, table_config);
   const auto properties = RestCatalogProperties::FromMap(default_properties);
   auto io_impl = properties.Get(RestCatalogProperties::kIOImpl);
   if (io_impl.empty()) {
+    // With no explicit io-impl, infer it from the table's metadata-location
+    // scheme, then the warehouse scheme, matching PyIceberg's load_file_io. This
+    // lets a catalog that relies solely on vended credentials resolve a table
+    // FileIO without a client-side io-impl or warehouse.
     const auto warehouse = properties.Get(RestCatalogProperties::kWarehouse);
-    if (warehouse.empty()) {
-      return InvalidArgument(R"("{}" or "{}" property is required to create FileIO)",
-                             RestCatalogProperties::kIOImpl.key(),
-                             RestCatalogProperties::kWarehouse.key());
+    if (!metadata_location.empty()) {
+      ICEBERG_ASSIGN_OR_RAISE(const auto detected_kind,
+                              DetectBuiltinFileIO(metadata_location));
+      io_impl = std::string(BuiltinFileIOName(detected_kind));
+    } else if (!warehouse.empty()) {
+      ICEBERG_ASSIGN_OR_RAISE(const auto detected_kind, DetectBuiltinFileIO(warehouse));
+      io_impl = std::string(BuiltinFileIOName(detected_kind));
+    } else {
+      io_impl = std::string(FileIORegistry::kArrowLocalFileIO);
     }
-    ICEBERG_ASSIGN_OR_RAISE(const auto detected_kind, DetectBuiltinFileIO(warehouse));
-    io_impl = std::string(BuiltinFileIOName(detected_kind));
   }
   ICEBERG_ASSIGN_OR_RAISE(auto io, FileIORegistry::Load(io_impl, default_properties));
 
