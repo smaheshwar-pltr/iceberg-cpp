@@ -21,7 +21,9 @@
 #include <string>
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
+#include "iceberg/json_serde_internal.h"
 #include "iceberg/partition_field.h"
 #include "iceberg/partition_spec.h"
 #include "iceberg/schema.h"
@@ -85,6 +87,50 @@ void AssertSnapshotById(const TableMetadata& metadata, int64_t snapshot_id,
   auto snapshot = metadata.SnapshotById(snapshot_id);
   ASSERT_TRUE(snapshot.has_value());
   EXPECT_EQ(*snapshot.value(), expected_snapshot);
+}
+
+nlohmann::json HistoricalSortOrderWithDroppedFieldMetadataJson(
+    int32_t default_sort_order_id) {
+  nlohmann::json metadata_json = R"({
+    "format-version": 2,
+    "table-uuid": "test-uuid-1234",
+    "location": "s3://bucket/test",
+    "last-sequence-number": 0,
+    "last-updated-ms": 0,
+    "last-column-id": 2,
+    "schemas": [
+      {
+        "type": "struct",
+        "schema-id": 1,
+        "fields": [
+          {"id": 1, "name": "id", "type": "int", "required": true}
+        ]
+      }
+    ],
+    "current-schema-id": 1,
+    "partition-specs": [{"spec-id": 0, "fields": []}],
+    "default-spec-id": 0,
+    "last-partition-id": 999,
+    "sort-orders": [
+      {"order-id": 1, "fields": [
+        {"transform": "identity", "source-id": 1, "direction": "asc", "null-order": "nulls-first"},
+        {"transform": "identity", "source-id": 2, "direction": "asc", "null-order": "nulls-first"}
+      ]},
+      {"order-id": 2, "fields": [
+        {"transform": "identity", "source-id": 1, "direction": "asc", "null-order": "nulls-first"}
+      ]}
+    ],
+    "properties": {},
+    "current-snapshot-id": null,
+    "refs": {},
+    "snapshots": [],
+    "statistics": [],
+    "partition-statistics": [],
+    "snapshot-log": [],
+    "metadata-log": []
+  })"_json;
+  metadata_json["default-sort-order-id"] = default_sort_order_id;
+  return metadata_json;
 }
 
 }  // namespace
@@ -404,6 +450,57 @@ TEST(MetadataSerdeTest, DeserializeUnsupportedVersion) {
                                "Cannot read unsupported version");
 }
 
+TEST(MetadataSerdeTest, DeserializeRejectsUnknownSchemaBeforeFormatV3) {
+  auto v1_metadata_json = nlohmann::json::parse(R"({
+    "format-version": 1,
+    "location": "s3://bucket/test/location",
+    "last-column-id": 1,
+    "last-updated-ms": 1602638573874,
+    "schema": {
+      "type": "struct",
+      "schema-id": 0,
+      "fields": [
+        {"id": 1, "name": "mystery", "type": "unknown", "required": false}
+      ]
+    },
+    "partition-spec": []
+  })");
+
+  auto result = TableMetadataFromJson(v1_metadata_json);
+  ASSERT_THAT(result, IsError(ErrorKind::kInvalidSchema));
+  EXPECT_THAT(result, HasErrorMessage(
+                          "Invalid type for mystery: unknown is not supported until v3"));
+
+  auto v2_metadata_json = nlohmann::json::parse(R"({
+    "format-version": 2,
+    "table-uuid": "9c12d441-03fe-4693-9a96-a0705ddf69c1",
+    "location": "s3://bucket/test/location",
+    "last-sequence-number": 0,
+    "last-column-id": 1,
+    "last-updated-ms": 1602638573874,
+    "schemas": [
+      {
+        "type": "struct",
+        "schema-id": 0,
+        "fields": [
+          {"id": 1, "name": "mystery", "type": "unknown", "required": false}
+        ]
+      }
+    ],
+    "current-schema-id": 0,
+    "partition-specs": [{"spec-id": 0, "fields": []}],
+    "default-spec-id": 0,
+    "last-partition-id": 999,
+    "sort-orders": [{"order-id": 0, "fields": []}],
+    "default-sort-order-id": 0
+  })");
+
+  result = TableMetadataFromJson(v2_metadata_json);
+  ASSERT_THAT(result, IsError(ErrorKind::kInvalidSchema));
+  EXPECT_THAT(result, HasErrorMessage(
+                          "Invalid type for mystery: unknown is not supported until v3"));
+}
+
 TEST(MetadataSerdeTest, DeserializeV1MissingSchemaType) {
   ReadTableMetadataExpectError("TableMetadataV1MissingSchemaType.json", "Missing 'type'");
 }
@@ -431,6 +528,78 @@ TEST(MetadataSerdeTest, DeserializeV2MissingSchemas) {
 TEST(MetadataSerdeTest, DeserializeV2MissingSortOrder) {
   ReadTableMetadataExpectError("TableMetadataV2MissingSortOrder.json",
                                "sort-orders must exist");
+}
+
+TEST(MetadataSerdeTest, DeserializeHistoricalSortOrderWithDroppedField) {
+  auto metadata =
+      TableMetadataFromJson(HistoricalSortOrderWithDroppedFieldMetadataJson(2));
+  ASSERT_THAT(metadata, IsOk());
+  ASSERT_EQ(metadata.value()->sort_orders.size(), 2);
+  EXPECT_EQ(metadata.value()->sort_orders[0]->order_id(), 1);
+  ASSERT_EQ(metadata.value()->sort_orders[0]->fields().size(), 2);
+  EXPECT_EQ(metadata.value()->sort_orders[0]->fields()[0].source_id(), 1);
+  EXPECT_EQ(metadata.value()->sort_orders[0]->fields()[1].source_id(), 2);
+  EXPECT_EQ(metadata.value()->sort_orders[1]->order_id(), 2);
+}
+
+TEST(MetadataSerdeTest, DeserializeDefaultSortOrderWithDroppedFieldFails) {
+  auto metadata =
+      TableMetadataFromJson(HistoricalSortOrderWithDroppedFieldMetadataJson(1));
+  ASSERT_THAT(metadata, IsError(ErrorKind::kInvalidArgument));
+  EXPECT_THAT(metadata, HasErrorMessage("Cannot find source column for sort field"));
+}
+
+TEST(MetadataSerdeTest, EncryptionKeysRoundTrip) {
+  nlohmann::json metadata_json = R"({
+    "format-version": 2,
+    "table-uuid": "test-uuid-1234",
+    "location": "s3://bucket/test",
+    "last-sequence-number": 0,
+    "last-updated-ms": 0,
+    "last-column-id": 1,
+    "schemas": [
+      {
+        "type": "struct",
+        "schema-id": 0,
+        "fields": [
+          {"id": 1, "name": "id", "type": "int", "required": true}
+        ]
+      }
+    ],
+    "current-schema-id": 0,
+    "partition-specs": [{"spec-id": 0, "fields": []}],
+    "default-spec-id": 0,
+    "last-partition-id": 999,
+    "sort-orders": [{"order-id": 0, "fields": []}],
+    "default-sort-order-id": 0,
+    "properties": {},
+    "current-snapshot-id": null,
+    "refs": {},
+    "snapshots": [],
+    "statistics": [],
+    "partition-statistics": [],
+    "snapshot-log": [],
+    "metadata-log": [],
+    "encryption-keys": [
+      {
+        "key-id": "key-1",
+        "encrypted-key-metadata": "c2VjcmV0LWtleS1tZXRhZGF0YQ==",
+        "encrypted-by-id": "kek-1",
+        "properties": {"scope": "table"}
+      }
+    ]
+  })"_json;
+
+  auto metadata = TableMetadataFromJson(metadata_json);
+  ASSERT_THAT(metadata, IsOk());
+  ASSERT_EQ(metadata.value()->encryption_keys.size(), 1);
+  EXPECT_EQ(metadata.value()->encryption_keys[0].key_id, "key-1");
+  EXPECT_EQ(metadata.value()->encryption_keys[0].encrypted_key_metadata,
+            "secret-key-metadata");
+
+  ICEBERG_UNWRAP_OR_FAIL(auto serialized, ToJson(*metadata.value()));
+  ASSERT_TRUE(serialized.contains("encryption-keys"));
+  EXPECT_EQ(serialized["encryption-keys"], metadata_json["encryption-keys"]);
 }
 
 }  // namespace iceberg

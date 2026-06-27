@@ -28,6 +28,7 @@
 #include "iceberg/result.h"
 #include "iceberg/transform_function.h"
 #include "iceberg/type.h"
+#include "iceberg/util/base64.h"
 #include "iceberg/util/checked_cast.h"
 #include "iceberg/util/macros.h"
 #include "iceberg/util/projection_util_internal.h"
@@ -134,10 +135,32 @@ Result<std::shared_ptr<TransformFunction>> Transform::Bind(
   }
 }
 
+std::shared_ptr<Type> Transform::ResultType(
+    const std::shared_ptr<Type>& source_type) const {
+  switch (transform_type_) {
+    case TransformType::kIdentity:
+    case TransformType::kTruncate:
+    case TransformType::kVoid:
+      return source_type;
+    case TransformType::kBucket:
+    case TransformType::kYear:
+    case TransformType::kMonth:
+    case TransformType::kHour:
+      return int32();
+    case TransformType::kDay:
+      return date();
+    case TransformType::kUnknown:
+      return string();
+  }
+  std::unreachable();
+}
+
 bool Transform::CanTransform(const Type& source_type) const {
   switch (transform_type_) {
     case TransformType::kIdentity:
-      if (!source_type.is_primitive()) [[unlikely]] {
+      if (source_type.is_variant() || source_type.type_id() == TypeId::kGeometry ||
+          source_type.type_id() == TypeId::kGeography || !source_type.is_primitive())
+          [[unlikely]] {
         return false;
       }
       return true;
@@ -437,7 +460,7 @@ Result<std::string> Transform::ToHumanString(const Literal& value) {
         case TypeId::kFixed:
         case TypeId::kBinary: {
           const auto& binary_data = std::get<std::vector<uint8_t>>(value.value());
-          return TransformUtil::Base64Encode(
+          return Base64::Encode(
               {reinterpret_cast<const char*>(binary_data.data()), binary_data.size()});
         }
         case TypeId::kDecimal: {

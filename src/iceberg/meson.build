@@ -17,6 +17,7 @@
 
 conf_data = configuration_data()
 version = meson.project_version()
+version_suffix = '-SNAPSHOT'
 components = version.split('.')
 assert(
     components.length() >= 3,
@@ -28,7 +29,7 @@ ver_patch = components[2]
 conf_data.set('PROJECT_VERSION_MAJOR', ver_major)
 conf_data.set('PROJECT_VERSION_MINOR', ver_minor)
 conf_data.set('PROJECT_VERSION_PATCH', ver_patch)
-conf_data.set('PROJECT_VERSION', version)
+conf_data.set('ICEBERG_VERSION_STRING', version + version_suffix)
 conf_data.set('PROJECT_NAME', meson.project_name())
 configure_file(
     input: 'version.h.in',
@@ -38,11 +39,15 @@ configure_file(
     install_dir: get_option('includedir') / 'iceberg',
 )
 
+subdir('logging')
+
 iceberg_include_dir = include_directories('..')
 iceberg_sources = files(
     'arrow_c_data_guard_internal.cc',
     'arrow_c_data_util.cc',
     'catalog/memory/in_memory_catalog.cc',
+    'catalog/session_catalog.cc',
+    'catalog/session_context.cc',
     'delete_file_index.cc',
     'expression/aggregate.cc',
     'expression/binder.cc',
@@ -64,8 +69,13 @@ iceberg_sources = files(
     'file_reader.cc',
     'file_writer.cc',
     'inheritable_metadata.cc',
+    'inspect/history_table.cc',
+    'inspect/metadata_table.cc',
+    'inspect/snapshots_table.cc',
     'json_serde.cc',
     'location_provider.cc',
+    'logging/cerr_logger.cc',
+    'logging/logger.cc',
     'manifest/manifest_adapter.cc',
     'manifest/manifest_entry.cc',
     'manifest/manifest_filter_manager.cc',
@@ -80,6 +90,13 @@ iceberg_sources = files(
     'manifest/v2_metadata.cc',
     'manifest/v3_metadata.cc',
     'metadata_columns.cc',
+    'metrics/commit_report.cc',
+    'metrics/counter.cc',
+    'metrics/json_serde.cc',
+    'metrics/metrics_context.cc',
+    'metrics/metrics_reporters.cc',
+    'metrics/scan_report.cc',
+    'metrics/timer.cc',
     'metrics_config.cc',
     'name_mapping.cc',
     'partition_field.cc',
@@ -109,9 +126,14 @@ iceberg_sources = files(
     'transform.cc',
     'transform_function.cc',
     'type.cc',
+    'update/delete_files.cc',
     'update/expire_snapshots.cc',
     'update/fast_append.cc',
+    'update/merge_append.cc',
+    'update/merging_snapshot_update.cc',
+    'update/overwrite_files.cc',
     'update/pending_update.cc',
+    'update/row_delta.cc',
     'update/set_snapshot.cc',
     'update/snapshot_manager.cc',
     'update/snapshot_update.cc',
@@ -123,6 +145,7 @@ iceberg_sources = files(
     'update/update_snapshot_reference.cc',
     'update/update_sort_order.cc',
     'update/update_statistics.cc',
+    'util/base64.cc',
     'util/bucket_util.cc',
     'util/content_file_util.cc',
     'util/conversions.cc',
@@ -134,7 +157,9 @@ iceberg_sources = files(
     'util/snapshot_util.cc',
     'util/string_util.cc',
     'util/struct_like_set.cc',
+    'util/task_group.cc',
     'util/temporal_util.cc',
+    'util/thread_util.cc',
     'util/timepoint.cc',
     'util/transform_util.cc',
     'util/truncate_util.cc',
@@ -170,9 +195,10 @@ croaring_needs_static = (
 croaring_dep = dependency('croaring', static: croaring_needs_static)
 nanoarrow_dep = dependency('nanoarrow')
 nlohmann_json_dep = dependency('nlohmann_json')
+spdlog_dep = dependency('spdlog')
 zlib_dep = dependency('zlib')
 
-iceberg_deps = [nanoarrow_dep, nlohmann_json_dep, zlib_dep]
+iceberg_deps = [nanoarrow_dep, nlohmann_json_dep, spdlog_dep, zlib_dep]
 
 iceberg_lib = library(
     'iceberg',
@@ -257,6 +283,7 @@ install_headers(
         'sort_field.h',
         'sort_order.h',
         'statistics_file.h',
+        'storage_credential.h',
         'table.h',
         'table_identifier.h',
         'table_metadata.h',
@@ -277,12 +304,15 @@ install_headers(
 subdir('catalog')
 subdir('data')
 subdir('deletes')
+subdir('encryption')
 subdir('expression')
 subdir('manifest')
+subdir('metrics')
 subdir('puffin')
 subdir('row')
 subdir('update')
 subdir('util')
+subdir('inspect')
 
 if get_option('tests').enabled()
     subdir('test')

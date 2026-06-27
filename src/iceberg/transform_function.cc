@@ -40,7 +40,9 @@ std::shared_ptr<Type> IdentityTransform::ResultType() const { return source_type
 
 Result<std::unique_ptr<TransformFunction>> IdentityTransform::Make(
     std::shared_ptr<Type> const& source_type) {
-  if (!source_type || !source_type->is_primitive()) {
+  if (!source_type || source_type->is_variant() ||
+      source_type->type_id() == TypeId::kGeometry ||
+      source_type->type_id() == TypeId::kGeography || !source_type->is_primitive()) {
     return NotSupported("{} is not a valid input type for identity transform",
                         source_type ? source_type->ToString() : "null");
   }
@@ -131,7 +133,7 @@ Result<std::unique_ptr<TransformFunction>> TruncateTransform::Make(
 }
 
 YearTransform::YearTransform(std::shared_ptr<Type> const& source_type)
-    : TransformFunction(TransformType::kTruncate, source_type) {}
+    : TransformFunction(TransformType::kYear, source_type) {}
 
 Result<Literal> YearTransform::Transform(const Literal& literal) {
   ICEBERG_DCHECK(*literal.type() == *source_type(),

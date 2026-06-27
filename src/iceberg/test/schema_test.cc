@@ -102,6 +102,8 @@ TEST(SchemaTest, ValidateRejectsV3TypesBeforeFormatV3) {
       {iceberg::SchemaField(1, "timestamp_ns", iceberg::timestamp_ns(), false)});
   iceberg::Schema timestamptz_ns_schema(
       {iceberg::SchemaField(1, "timestamptz_ns", iceberg::timestamptz_ns(), false)});
+  iceberg::Schema unknown_schema(
+      {iceberg::SchemaField(1, "unknown", iceberg::unknown(), true)});
 
   auto status = timestamp_ns_schema.Validate(2);
   ASSERT_THAT(status, iceberg::IsError(iceberg::ErrorKind::kInvalidSchema));
@@ -115,12 +117,42 @@ TEST(SchemaTest, ValidateRejectsV3TypesBeforeFormatV3) {
                           "Invalid type for timestamptz_ns: timestamptz_ns is not "
                           "supported until v3"));
 
+  status = unknown_schema.Validate(2);
+  ASSERT_THAT(status, iceberg::IsError(iceberg::ErrorKind::kInvalidSchema));
+  EXPECT_THAT(status, iceberg::HasErrorMessage(
+                          "Invalid type for unknown: unknown is not supported until v3"));
+
   EXPECT_THAT(
       timestamp_ns_schema.Validate(iceberg::TableMetadata::kSupportedTableFormatVersion),
       iceberg::IsOk());
   EXPECT_THAT(timestamptz_ns_schema.Validate(
                   iceberg::TableMetadata::kSupportedTableFormatVersion),
               iceberg::IsOk());
+  EXPECT_THAT(
+      unknown_schema.Validate(iceberg::TableMetadata::kSupportedTableFormatVersion),
+      iceberg::IsOk());
+}
+
+TEST(SchemaTest, ValidateRejectsInvalidUnknownFields) {
+  iceberg::Schema required_unknown_schema(
+      {iceberg::SchemaField(1, "mystery", iceberg::unknown(), false)});
+  auto status = required_unknown_schema.Validate(
+      iceberg::TableMetadata::kSupportedTableFormatVersion);
+  ASSERT_THAT(status, iceberg::IsError(iceberg::ErrorKind::kInvalidArgument));
+  EXPECT_THAT(status,
+              iceberg::HasErrorMessage("Unknown type field 'mystery' must be optional"));
+
+  iceberg::Schema map_key_unknown_schema({iceberg::SchemaField::MakeOptional(
+      1, "properties",
+      std::make_shared<iceberg::MapType>(
+          iceberg::SchemaField::MakeRequired(2, iceberg::MapType::kKeyName,
+                                             iceberg::unknown()),
+          iceberg::SchemaField::MakeOptional(3, iceberg::MapType::kValueName,
+                                             iceberg::string())))});
+  status = map_key_unknown_schema.Validate(
+      iceberg::TableMetadata::kSupportedTableFormatVersion);
+  ASSERT_THAT(status, iceberg::IsError(iceberg::ErrorKind::kInvalidArgument));
+  EXPECT_THAT(status, iceberg::HasErrorMessage("Map 'key' cannot be unknown type"));
 }
 
 TEST(SchemaTest, IdentifierFields) {
@@ -639,6 +671,7 @@ iceberg::SchemaField Id() { return {1, "id", iceberg::int32(), true}; }
 iceberg::SchemaField Name() { return {2, "name", iceberg::string(), false}; }
 iceberg::SchemaField Age() { return {3, "age", iceberg::int32(), true}; }
 iceberg::SchemaField Email() { return {4, "email", iceberg::string(), true}; }
+iceberg::SchemaField Payload() { return {5, "payload", iceberg::variant(), true}; }
 iceberg::SchemaField Street() { return {11, "street", iceberg::string(), true}; }
 iceberg::SchemaField City() { return {12, "city", iceberg::string(), true}; }
 iceberg::SchemaField Zip() { return {13, "zip", iceberg::int32(), true}; }
@@ -649,6 +682,10 @@ iceberg::SchemaField Element() { return {41, "element", iceberg::string(), false
 
 static std::unique_ptr<iceberg::Schema> BasicSchema() {
   return MakeSchema(Id(), Name(), Age(), Email());
+}
+
+static std::unique_ptr<iceberg::Schema> VariantSchema() {
+  return MakeSchema(Id(), Payload());
 }
 
 static std::unique_ptr<iceberg::Schema> AddressSchema() {
@@ -900,30 +937,36 @@ TEST_P(ProjectParamTest, ProjectFields) {
 
 INSTANTIATE_TEST_SUITE_P(
     ProjectTestCases, ProjectParamTest,
-    ::testing::Values(ProjectTestParam{.test_name = "ProjectAllFields",
-                                       .create_schema = []() { return BasicSchema(); },
-                                       .selected_ids = {1, 2, 3, 4},
-                                       .expected_schema = []() { return BasicSchema(); },
-                                       .should_succeed = true},
+    ::testing::Values(
+        ProjectTestParam{.test_name = "ProjectAllFields",
+                         .create_schema = []() { return BasicSchema(); },
+                         .selected_ids = {1, 2, 3, 4},
+                         .expected_schema = []() { return BasicSchema(); },
+                         .should_succeed = true},
 
-                      ProjectTestParam{
-                          .test_name = "ProjectSingleField",
-                          .create_schema = []() { return BasicSchema(); },
-                          .selected_ids = {2},
-                          .expected_schema = []() { return MakeSchema(Name()); },
-                          .should_succeed = true},
+        ProjectTestParam{.test_name = "ProjectSingleField",
+                         .create_schema = []() { return BasicSchema(); },
+                         .selected_ids = {2},
+                         .expected_schema = []() { return MakeSchema(Name()); },
+                         .should_succeed = true},
 
-                      ProjectTestParam{.test_name = "ProjectNonExistentFieldId",
-                                       .create_schema = []() { return BasicSchema(); },
-                                       .selected_ids = {999},
-                                       .expected_schema = []() { return MakeSchema(); },
-                                       .should_succeed = true},
+        ProjectTestParam{.test_name = "ProjectVariantField",
+                         .create_schema = []() { return VariantSchema(); },
+                         .selected_ids = {5},
+                         .expected_schema = []() { return MakeSchema(Payload()); },
+                         .should_succeed = true},
 
-                      ProjectTestParam{.test_name = "ProjectEmptySelection",
-                                       .create_schema = []() { return BasicSchema(); },
-                                       .selected_ids = {},
-                                       .expected_schema = []() { return MakeSchema(); },
-                                       .should_succeed = true}));
+        ProjectTestParam{.test_name = "ProjectNonExistentFieldId",
+                         .create_schema = []() { return BasicSchema(); },
+                         .selected_ids = {999},
+                         .expected_schema = []() { return MakeSchema(); },
+                         .should_succeed = true},
+
+        ProjectTestParam{.test_name = "ProjectEmptySelection",
+                         .create_schema = []() { return BasicSchema(); },
+                         .selected_ids = {},
+                         .expected_schema = []() { return MakeSchema(); },
+                         .should_succeed = true}));
 
 INSTANTIATE_TEST_SUITE_P(ProjectNestedTestCases, ProjectParamTest,
                          ::testing::Values(ProjectTestParam{
