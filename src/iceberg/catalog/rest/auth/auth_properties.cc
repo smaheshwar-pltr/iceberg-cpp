@@ -62,7 +62,7 @@ Result<AuthProperties> AuthProperties::FromProperties(
   }
 
   // Resolve token endpoint: if not explicitly set, derive from catalog URI
-  if (properties.find(kOAuth2ServerUri.key()) == properties.end() ||
+  if (!properties.contains(kOAuth2ServerUri.key()) ||
       properties.at(kOAuth2ServerUri.key()).empty()) {
     auto uri_it = properties.find(RestCatalogProperties::kUri.key());
     if (uri_it != properties.end() && !uri_it->second.empty()) {
