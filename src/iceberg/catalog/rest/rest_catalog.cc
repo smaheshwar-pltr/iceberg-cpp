@@ -488,9 +488,11 @@ Result<std::shared_ptr<auth::AuthSession>> RestCatalog::TableAuthSession(
 Result<std::shared_ptr<FileIO>> RestCatalog::TableFileIO(
     const SessionContext& /*context*/,
     const std::unordered_map<std::string, std::string>& table_config,
+    std::string_view metadata_location,
     const std::vector<StorageCredential>& storage_credentials) const {
   if (!table_config.empty() || !storage_credentials.empty()) {
-    return MakeTableFileIO(config_.configs(), table_config, storage_credentials);
+    return MakeTableFileIO(config_.configs(), table_config, metadata_location,
+                           storage_credentials);
   }
 
   return file_io_;
@@ -730,8 +732,9 @@ Result<std::shared_ptr<Transaction>> RestCatalog::StageCreateTable(
                           /*stage_create=*/true, *contextual_session));
   auto table_config = std::move(result.config);
   auto storage_credentials = std::move(result.storage_credentials);
-  ICEBERG_ASSIGN_OR_RAISE(auto table_io,
-                          TableFileIO(context, table_config, storage_credentials));
+  ICEBERG_ASSIGN_OR_RAISE(
+      auto table_io,
+      TableFileIO(context, table_config, result.metadata_location, storage_credentials));
   ICEBERG_ASSIGN_OR_RAISE(
       auto table_session,
       TableAuthSession(identifier, table_config, std::move(contextual_session)));
@@ -846,8 +849,9 @@ Result<std::shared_ptr<Table>> RestCatalog::MakeTableFromLoadResult(
     std::shared_ptr<auth::AuthSession> contextual_session) {
   auto table_config = std::move(result.config);
   auto storage_credentials = std::move(result.storage_credentials);
-  ICEBERG_ASSIGN_OR_RAISE(auto table_io,
-                          TableFileIO(context, table_config, storage_credentials));
+  ICEBERG_ASSIGN_OR_RAISE(
+      auto table_io,
+      TableFileIO(context, table_config, result.metadata_location, storage_credentials));
   ICEBERG_ASSIGN_OR_RAISE(
       auto table_session,
       TableAuthSession(identifier, table_config, std::move(contextual_session)));

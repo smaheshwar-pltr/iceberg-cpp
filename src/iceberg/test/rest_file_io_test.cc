@@ -88,9 +88,16 @@ TEST(RestFileIOTest, DetectBuiltinKindRejectsUnsupportedScheme) {
   EXPECT_THAT(result, HasErrorMessage("not supported for automatic FileIO resolution"));
 }
 
-TEST(RestFileIOTest, MakeCatalogFileIOMissingImplAndWarehouse) {
+TEST(RestFileIOTest, MakeCatalogFileIOFallsBackToLocalWhenUnconfigured) {
+  FileIORegistry::Register(
+      std::string(FileIORegistry::kArrowLocalFileIO),
+      [](const std::unordered_map<std::string, std::string>& /*properties*/)
+          -> Result<std::unique_ptr<FileIO>> { return std::make_unique<MockFileIO>(); });
+
+  // With neither io-impl nor warehouse configured, the catalog still gets a
+  // (local) FileIO rather than failing, so per-table credential vending works.
   auto result = MakeCatalogFileIO(RestCatalogProperties::default_properties());
-  EXPECT_THAT(result, IsError(ErrorKind::kInvalidArgument));
+  ASSERT_THAT(result, IsOk());
 }
 
 TEST(RestFileIOTest, MakeCatalogFileIORejectsIncompatibleWarehouse) {
@@ -187,6 +194,7 @@ TEST(RestFileIOTest, TableFileIOMergesConfigAndCredentials) {
        {"catalog-only", "catalog"},
        {"shared", "catalog"}},
       {{"io-impl", custom_impl}, {"table-only", "table"}, {"shared", "table"}},
+      /*metadata_location=*/"s3://bucket/table/metadata/v1.metadata.json",
       {{.prefix = "s3://bucket/table",
         .config = {{"shared", "credential"}, {"credential-only", "value"}}}});
   ASSERT_THAT(result, IsOk());
@@ -221,7 +229,7 @@ TEST(RestFileIOTest, TableImplOverridesWarehouseScheme) {
   auto result =
       MakeTableFileIO({{"warehouse", "/tmp/catalog-warehouse"}},
                       {{"io-impl", std::string(FileIORegistry::kArrowS3FileIO)}},
-                      /*storage_credentials=*/{});
+                      /*metadata_location=*/"", /*storage_credentials=*/{});
   ASSERT_THAT(result, IsOk());
   EXPECT_THAT(
       captured_file_io_properties,
@@ -239,9 +247,48 @@ TEST(RestFileIOTest, TableFileIORejectsCredentials) {
 
   auto result = MakeTableFileIO(
       {{"warehouse", "s3://catalog/warehouse"}}, {{"io-impl", custom_impl}},
+      /*metadata_location=*/"s3://bucket/table",
       {{.prefix = "s3://bucket/table", .config = {{"k", "v"}}}});
   EXPECT_THAT(result, IsError(ErrorKind::kNotSupported));
   EXPECT_THAT(result, HasErrorMessage("does not support vended storage credentials"));
+}
+
+TEST(RestFileIOTest, TableFileIODetectsImplFromMetadataLocation) {
+  captured_storage_credentials.clear();
+  FileIORegistry::Register(
+      std::string(FileIORegistry::kArrowS3FileIO),
+      [](const std::unordered_map<std::string, std::string>& /*properties*/)
+          -> Result<std::unique_ptr<FileIO>> {
+        return std::make_unique<MockCredentialedFileIO>();
+      });
+
+  // No io-impl or warehouse anywhere; the implementation is inferred from the
+  // table's metadata location scheme. The credential carries a scheme-only "s3"
+  // prefix (which is not itself a resolvable URI), so detection must not rely on
+  // it; the vended credentials are still applied.
+  auto result = MakeTableFileIO(
+      /*catalog_config=*/{}, /*table_config=*/{},
+      /*metadata_location=*/"s3://bucket/table/metadata/v1.metadata.json",
+      {{.prefix = "s3", .config = {{"k", "v"}}}});
+  ASSERT_THAT(result, IsOk());
+  ASSERT_NE(result.value()->AsSupportsStorageCredentials(), nullptr);
+  ASSERT_EQ(captured_storage_credentials.size(), 1);
+  EXPECT_EQ(captured_storage_credentials[0].prefix, "s3");
+}
+
+TEST(RestFileIOTest, TableFileIOFallsBackToLocalWhenUnconfigured) {
+  FileIORegistry::Register(
+      std::string(FileIORegistry::kArrowLocalFileIO),
+      [](const std::unordered_map<std::string, std::string>& /*properties*/)
+          -> Result<std::unique_ptr<FileIO>> { return std::make_unique<MockFileIO>(); });
+
+  // table_config exercises MakeTableFileIO, but there is no io-impl, warehouse,
+  // or metadata location to infer from, so it defaults to a local FileIO.
+  auto result = MakeTableFileIO(/*catalog_config=*/{},
+                                /*table_config=*/{{"some-key", "value"}},
+                                /*metadata_location=*/"",
+                                /*storage_credentials=*/{});
+  ASSERT_THAT(result, IsOk());
 }
 
 }  // namespace iceberg::rest

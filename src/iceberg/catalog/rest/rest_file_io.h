@@ -48,9 +48,14 @@ ICEBERG_REST_EXPORT Result<std::unique_ptr<FileIO>> MakeCatalogFileIO(
     const RestCatalogProperties& config);
 
 /// \brief Build the configured table FileIO and apply storage credentials if present.
+///
+/// The implementation is resolved in priority order from the merged catalog and
+/// table config "io-impl", the "warehouse" scheme, then the \p metadata_location
+/// scheme, falling back to a local FileIO when none of these is available.
 ICEBERG_REST_EXPORT Result<std::unique_ptr<FileIO>> MakeTableFileIO(
     const std::unordered_map<std::string, std::string>& catalog_config,
     const std::unordered_map<std::string, std::string>& table_config,
+    std::string_view metadata_location,
     const std::vector<StorageCredential>& storage_credentials);
 
 }  // namespace iceberg::rest
