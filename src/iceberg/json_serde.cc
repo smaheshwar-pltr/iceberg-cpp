@@ -43,6 +43,7 @@
 #include "iceberg/table_update.h"
 #include "iceberg/transform.h"
 #include "iceberg/type.h"
+#include "iceberg/util/base64.h"
 #include "iceberg/util/checked_cast.h"
 #include "iceberg/util/formatter.h"  // IWYU pragma: keep
 #include "iceberg/util/json_util_internal.h"
@@ -90,6 +91,8 @@ constexpr std::string_view kValueId = "value-id";
 constexpr std::string_view kRequired = "required";
 constexpr std::string_view kElementRequired = "element-required";
 constexpr std::string_view kValueRequired = "value-required";
+constexpr std::string_view kEncryptedKeyMetadata = "encrypted-key-metadata";
+constexpr std::string_view kEncryptedById = "encrypted-by-id";
 
 // Snapshot constants
 constexpr std::string_view kSpecId = "spec-id";
@@ -166,6 +169,7 @@ constexpr std::string_view kRefs = "refs";
 constexpr std::string_view kStatistics = "statistics";
 constexpr std::string_view kPartitionStatistics = "partition-statistics";
 constexpr std::string_view kNextRowId = "next-row-id";
+constexpr std::string_view kEncryptionKeys = "encryption-keys";
 constexpr std::string_view kMetadataFile = "metadata-file";
 constexpr std::string_view kStatisticsPath = "statistics-path";
 constexpr std::string_view kFileSizeInBytes = "file-size-in-bytes";
@@ -196,6 +200,8 @@ constexpr std::string_view kActionRemoveStatistics = "remove-statistics";
 constexpr std::string_view kActionSetPartitionStatistics = "set-partition-statistics";
 constexpr std::string_view kActionRemovePartitionStatistics =
     "remove-partition-statistics";
+constexpr std::string_view kActionAddEncryptionKey = "add-encryption-key";
+constexpr std::string_view kActionRemoveEncryptionKey = "remove-encryption-key";
 
 // TableUpdate field constants
 constexpr std::string_view kUUID = "uuid";
@@ -207,8 +213,12 @@ constexpr std::string_view kSortOrderId = "sort-order-id";
 constexpr std::string_view kSnapshot = "snapshot";
 constexpr std::string_view kSnapshotIds = "snapshot-ids";
 constexpr std::string_view kRefName = "ref-name";
+constexpr std::string_view kRef = "ref";
 constexpr std::string_view kUpdates = "updates";
 constexpr std::string_view kRemovals = "removals";
+constexpr std::string_view kUpdated = "updated";
+constexpr std::string_view kRemoved = "removed";
+constexpr std::string_view kEncryptionKey = "encryption-key";
 
 // TableRequirement type constants
 constexpr std::string_view kRequirementAssertDoesNotExist = "assert-create";
@@ -263,8 +273,14 @@ Result<std::unique_ptr<SortField>> SortFieldFromJson(const nlohmann::json& json)
                                      null_order);
 }
 
-Result<std::unique_ptr<SortOrder>> SortOrderFromJson(
-    const nlohmann::json& json, const std::shared_ptr<Schema>& current_schema) {
+namespace {
+
+struct ParsedSortOrder {
+  int32_t order_id;
+  std::vector<SortField> fields;
+};
+
+Result<ParsedSortOrder> ParseSortOrder(const nlohmann::json& json) {
   ICEBERG_ASSIGN_OR_RAISE(auto order_id, GetJsonValue<int32_t>(json, kOrderId));
   ICEBERG_ASSIGN_OR_RAISE(auto fields, GetJsonValue<nlohmann::json>(json, kFields));
 
@@ -273,34 +289,45 @@ Result<std::unique_ptr<SortOrder>> SortOrderFromJson(
     ICEBERG_ASSIGN_OR_RAISE(auto sort_field, SortFieldFromJson(field_json));
     sort_fields.push_back(std::move(*sort_field));
   }
-  return SortOrder::Make(*current_schema, order_id, std::move(sort_fields));
+  return ParsedSortOrder{.order_id = order_id, .fields = std::move(sort_fields)};
+}
+
+}  // namespace
+
+Result<std::unique_ptr<SortOrder>> SortOrderFromJson(
+    const nlohmann::json& json, const std::shared_ptr<Schema>& current_schema,
+    int32_t default_sort_order_id) {
+  ICEBERG_ASSIGN_OR_RAISE(auto parsed, ParseSortOrder(json));
+  if (parsed.order_id == default_sort_order_id) {
+    return SortOrder::Make(*current_schema, parsed.order_id, std::move(parsed.fields));
+  }
+  return SortOrder::Make(parsed.order_id, std::move(parsed.fields));
+}
+
+Result<std::unique_ptr<SortOrder>> SortOrderFromJson(
+    const nlohmann::json& json, const std::shared_ptr<Schema>& current_schema) {
+  ICEBERG_ASSIGN_OR_RAISE(auto parsed, ParseSortOrder(json));
+  return SortOrder::Make(*current_schema, parsed.order_id, std::move(parsed.fields));
 }
 
 Result<std::unique_ptr<SortOrder>> SortOrderFromJson(const nlohmann::json& json) {
-  ICEBERG_ASSIGN_OR_RAISE(auto order_id, GetJsonValue<int32_t>(json, kOrderId));
-  ICEBERG_ASSIGN_OR_RAISE(auto fields, GetJsonValue<nlohmann::json>(json, kFields));
-
-  std::vector<SortField> sort_fields;
-  for (const auto& field_json : fields) {
-    ICEBERG_ASSIGN_OR_RAISE(auto sort_field, SortFieldFromJson(field_json));
-    sort_fields.push_back(std::move(*sort_field));
-  }
-  return SortOrder::Make(order_id, std::move(sort_fields));
+  ICEBERG_ASSIGN_OR_RAISE(auto parsed, ParseSortOrder(json));
+  return SortOrder::Make(parsed.order_id, std::move(parsed.fields));
 }
 
-nlohmann::json ToJson(const SchemaField& field) {
+Result<nlohmann::json> ToJson(const SchemaField& field) {
   nlohmann::json json;
   json[kId] = field.field_id();
   json[kName] = field.name();
   json[kRequired] = !field.optional();
-  json[kType] = ToJson(*field.type());
+  ICEBERG_ASSIGN_OR_RAISE(json[kType], ToJson(*field.type()));
   if (!field.doc().empty()) {
     json[kDoc] = field.doc();
   }
   return json;
 }
 
-nlohmann::json ToJson(const Type& type) {
+Result<nlohmann::json> ToJson(const Type& type) {
   switch (type.type_id()) {
     case TypeId::kStruct: {
       const auto& struct_type = internal::checked_cast<const StructType&>(type);
@@ -308,7 +335,8 @@ nlohmann::json ToJson(const Type& type) {
       json[kType] = kStruct;
       nlohmann::json fields_json = nlohmann::json::array();
       for (const auto& field : struct_type.fields()) {
-        fields_json.push_back(ToJson(field));
+        ICEBERG_ASSIGN_OR_RAISE(auto field_json, ToJson(field));
+        fields_json.push_back(std::move(field_json));
         // TODO(gangwu): add default values
       }
       json[kFields] = fields_json;
@@ -322,7 +350,7 @@ nlohmann::json ToJson(const Type& type) {
       const auto& element_field = list_type.fields().front();
       json[kElementId] = element_field.field_id();
       json[kElementRequired] = !element_field.optional();
-      json[kElement] = ToJson(*element_field.type());
+      ICEBERG_ASSIGN_OR_RAISE(json[kElement], ToJson(*element_field.type()));
       return json;
     }
     case TypeId::kMap: {
@@ -332,12 +360,12 @@ nlohmann::json ToJson(const Type& type) {
 
       const auto& key_field = map_type.key();
       json[kKeyId] = key_field.field_id();
-      json[kKey] = ToJson(*key_field.type());
+      ICEBERG_ASSIGN_OR_RAISE(json[kKey], ToJson(*key_field.type()));
 
       const auto& value_field = map_type.value();
       json[kValueId] = value_field.field_id();
       json[kValueRequired] = !value_field.optional();
-      json[kValue] = ToJson(*value_field.type());
+      ICEBERG_ASSIGN_OR_RAISE(json[kValue], ToJson(*value_field.type()));
       return json;
     }
     case TypeId::kBoolean:
@@ -377,12 +405,21 @@ nlohmann::json ToJson(const Type& type) {
     }
     case TypeId::kUuid:
       return "uuid";
+    case TypeId::kUnknown:
+      return "unknown";
+    case TypeId::kVariant:
+      return "variant";
+    case TypeId::kGeometry:
+      return type.ToString();
+    case TypeId::kGeography:
+      return type.ToString();
   }
   std::unreachable();
 }
 
-nlohmann::json ToJson(const Schema& schema) {
-  nlohmann::json json = ToJson(internal::checked_cast<const Type&>(schema));
+Result<nlohmann::json> ToJson(const Schema& schema) {
+  ICEBERG_ASSIGN_OR_RAISE(nlohmann::json json,
+                          ToJson(internal::checked_cast<const Type&>(schema)));
   json[kSchemaId] = schema.schema_id();
   if (!schema.IdentifierFieldIds().empty()) {
     json[kIdentifierFieldIds] = schema.IdentifierFieldIds();
@@ -391,7 +428,8 @@ nlohmann::json ToJson(const Schema& schema) {
 }
 
 Result<std::string> ToJsonString(const Schema& schema) {
-  return ToJsonString(ToJson(schema));
+  ICEBERG_ASSIGN_OR_RAISE(auto json, ToJson(schema));
+  return ToJsonString(json);
 }
 
 nlohmann::json ToJson(const SnapshotRef& ref) {
@@ -447,9 +485,10 @@ Result<std::unique_ptr<Type>> ListTypeFromJson(const nlohmann::json& json) {
   ICEBERG_ASSIGN_OR_RAISE(auto element_required,
                           GetJsonValue<bool>(json, kElementRequired));
 
-  return std::make_unique<ListType>(
-      SchemaField(element_id, std::string(ListType::kElementName),
-                  std::move(element_type), !element_required));
+  ICEBERG_ASSIGN_OR_RAISE(auto type, ListType::Make(SchemaField(
+                                         element_id, std::string(ListType::kElementName),
+                                         std::move(element_type), !element_required)));
+  return std::unique_ptr<Type>(std::move(type));
 }
 
 Result<std::unique_ptr<Type>> MapTypeFromJson(const nlohmann::json& json) {
@@ -466,77 +505,126 @@ Result<std::unique_ptr<Type>> MapTypeFromJson(const nlohmann::json& json) {
                         /*optional=*/false);
   SchemaField value_field(value_id, std::string(MapType::kValueName),
                           std::move(value_type), !value_required);
-  return std::make_unique<MapType>(std::move(key_field), std::move(value_field));
+  ICEBERG_ASSIGN_OR_RAISE(auto type,
+                          MapType::Make(std::move(key_field), std::move(value_field)));
+  return std::unique_ptr<Type>(std::move(type));
 }
 
 }  // namespace
 
 Result<std::unique_ptr<Type>> TypeFromJson(const nlohmann::json& json) {
   if (json.is_string()) {
-    std::string type_str = json.get<std::string>();
-    if (type_str == "boolean") {
+    const auto type_name = json.get<std::string>();
+    const auto normalized_type_name = StringUtils::ToLower(type_name);
+    if (normalized_type_name == "boolean") {
       return std::make_unique<BooleanType>();
-    } else if (type_str == "int") {
+    } else if (normalized_type_name == "int") {
       return std::make_unique<IntType>();
-    } else if (type_str == "long") {
+    } else if (normalized_type_name == "long") {
       return std::make_unique<LongType>();
-    } else if (type_str == "float") {
+    } else if (normalized_type_name == "float") {
       return std::make_unique<FloatType>();
-    } else if (type_str == "double") {
+    } else if (normalized_type_name == "double") {
       return std::make_unique<DoubleType>();
-    } else if (type_str == "date") {
+    } else if (normalized_type_name == "date") {
       return std::make_unique<DateType>();
-    } else if (type_str == "time") {
+    } else if (normalized_type_name == "time") {
       return std::make_unique<TimeType>();
-    } else if (type_str == "timestamp") {
+    } else if (normalized_type_name == "timestamp") {
       return std::make_unique<TimestampType>();
-    } else if (type_str == "timestamptz") {
+    } else if (normalized_type_name == "timestamptz") {
       return std::make_unique<TimestampTzType>();
-    } else if (type_str == "timestamp_ns") {
+    } else if (normalized_type_name == "timestamp_ns") {
       return std::make_unique<TimestampNsType>();
-    } else if (type_str == "timestamptz_ns") {
+    } else if (normalized_type_name == "timestamptz_ns") {
       return std::make_unique<TimestampTzNsType>();
-    } else if (type_str == "string") {
+    } else if (normalized_type_name == "string") {
       return std::make_unique<StringType>();
-    } else if (type_str == "binary") {
+    } else if (normalized_type_name == "binary") {
       return std::make_unique<BinaryType>();
-    } else if (type_str == "uuid") {
+    } else if (normalized_type_name == "uuid") {
       return std::make_unique<UuidType>();
-    } else if (type_str.starts_with("fixed")) {
-      std::regex fixed_regex(R"(fixed\[\s*(\d+)\s*\])");
+    } else if (normalized_type_name == "unknown") {
+      return std::make_unique<UnknownType>();
+    } else if (normalized_type_name == "variant") {
+      return std::make_unique<VariantType>();
+    } else if (normalized_type_name.starts_with("fixed")) {
+      static const std::regex kFixedRegex(R"(fixed\[\s*(\d+)\s*\])");
       std::smatch match;
-      if (std::regex_match(type_str, match, fixed_regex)) {
+      if (std::regex_match(normalized_type_name, match, kFixedRegex)) {
         ICEBERG_ASSIGN_OR_RAISE(auto length,
                                 StringUtils::ParseNumber<int32_t>(match[1].str()));
         return std::make_unique<FixedType>(length);
       }
-      return JsonParseError("Invalid fixed type: {}", type_str);
-    } else if (type_str.starts_with("decimal")) {
-      std::regex decimal_regex(R"(decimal\(\s*(\d+)\s*,\s*(\d+)\s*\))");
+      return JsonParseError("Invalid fixed type: {}", type_name);
+    } else if (normalized_type_name.starts_with("decimal")) {
+      static const std::regex kDecimalRegex(R"(decimal\(\s*(\d+)\s*,\s*(\d+)\s*\))");
       std::smatch match;
-      if (std::regex_match(type_str, match, decimal_regex)) {
+      if (std::regex_match(normalized_type_name, match, kDecimalRegex)) {
         ICEBERG_ASSIGN_OR_RAISE(auto precision,
                                 StringUtils::ParseNumber<int32_t>(match[1].str()));
         ICEBERG_ASSIGN_OR_RAISE(auto scale,
                                 StringUtils::ParseNumber<int32_t>(match[2].str()));
         return std::make_unique<DecimalType>(precision, scale);
       }
-      return JsonParseError("Invalid decimal type: {}", type_str);
+      return JsonParseError("Invalid decimal type: {}", type_name);
+    } else if (normalized_type_name.starts_with("geometry")) {
+      static const std::regex kGeometryRegex(R"(geometry\s*(?:\(\s*([^)]*?)\s*\))?)",
+                                             std::regex_constants::icase);
+      std::smatch match;
+      if (std::regex_match(type_name, match, kGeometryRegex)) {
+        if (match[1].matched) {
+          auto crs = match[1].str();
+          if (crs.empty()) {
+            return JsonParseError("Invalid geometry type: {}", type_name);
+          }
+          ICEBERG_ASSIGN_OR_RAISE(auto type, GeometryType::Make(std::move(crs)));
+          return std::unique_ptr<Type>(std::move(type));
+        }
+        ICEBERG_ASSIGN_OR_RAISE(auto type, GeometryType::Make());
+        return std::unique_ptr<Type>(std::move(type));
+      }
+      return JsonParseError("Invalid geometry type: {}", type_name);
+    } else if (normalized_type_name.starts_with("geography")) {
+      static const std::regex kGeographyRegex(
+          R"(geography\s*(?:\(\s*([^,]*?)\s*(?:,\s*(\w*)\s*)?\))?)",
+          std::regex_constants::icase);
+      std::smatch match;
+      if (std::regex_match(type_name, match, kGeographyRegex)) {
+        auto crs = match[1].str();
+        if (match[1].matched && crs.empty()) {
+          return JsonParseError("Invalid geography type: {}", type_name);
+        }
+        if (match[2].matched) {
+          ICEBERG_ASSIGN_OR_RAISE(auto algorithm,
+                                  EdgeAlgorithmFromString(match[2].str()));
+          ICEBERG_ASSIGN_OR_RAISE(auto type,
+                                  GeographyType::Make(std::move(crs), algorithm));
+          return std::unique_ptr<Type>(std::move(type));
+        }
+        if (match[1].matched) {
+          ICEBERG_ASSIGN_OR_RAISE(auto type, GeographyType::Make(std::move(crs)));
+          return std::unique_ptr<Type>(std::move(type));
+        }
+        ICEBERG_ASSIGN_OR_RAISE(auto type, GeographyType::Make());
+        return std::unique_ptr<Type>(std::move(type));
+      }
+      return JsonParseError("Invalid geography type: {}", type_name);
     } else {
-      return JsonParseError("Unknown primitive type: {}", type_str);
+      return JsonParseError("Cannot parse type string: {}", type_name);
     }
   }
 
   // For complex types like struct, list, and map
-  ICEBERG_ASSIGN_OR_RAISE(auto type_str, GetJsonValue<std::string>(json, kType));
-  if (type_str == kStruct) {
+  ICEBERG_ASSIGN_OR_RAISE(auto complex_type_name, GetJsonValue<std::string>(json, kType));
+  if (complex_type_name == kStruct) {
     return StructTypeFromJson(json);
-  } else if (type_str == kList) {
+  } else if (complex_type_name == kList) {
     return ListTypeFromJson(json);
-  } else if (type_str == kMap) {
+  } else if (complex_type_name == kMap) {
     return MapTypeFromJson(json);
   } else {
-    return JsonParseError("Unknown complex type: {}", type_str);
+    return JsonParseError("Unknown complex type: {}", complex_type_name);
   }
 }
 
@@ -846,7 +934,42 @@ Result<MetadataLogEntry> MetadataLogEntryFromJson(const nlohmann::json& json) {
   return metadata_log_entry;
 }
 
-nlohmann::json ToJson(const TableMetadata& table_metadata) {
+nlohmann::json ToJson(const EncryptedKey& encrypted_key) {
+  nlohmann::json json;
+  json[kKeyId] = encrypted_key.key_id;
+  json[kEncryptedKeyMetadata] = Base64::Encode(encrypted_key.encrypted_key_metadata);
+  SetOptionalField(json, kEncryptedById, encrypted_key.encrypted_by_id);
+  if (!encrypted_key.properties.empty()) {
+    json[kProperties] = encrypted_key.properties;
+  }
+  return json;
+}
+
+Result<EncryptedKey> EncryptedKeyFromJson(const nlohmann::json& json) {
+  using StringMap = std::unordered_map<std::string, std::string>;
+
+  if (!json.is_object()) {
+    return JsonParseError("Invalid encryption key, must be non-null object: {}",
+                          SafeDumpJson(json));
+  }
+
+  ICEBERG_ASSIGN_OR_RAISE(auto key_id, GetJsonValue<std::string>(json, kKeyId));
+  ICEBERG_ASSIGN_OR_RAISE(auto encoded_metadata,
+                          GetJsonValue<std::string>(json, kEncryptedKeyMetadata));
+  ICEBERG_ASSIGN_OR_RAISE(auto encrypted_key_metadata, Base64::Decode(encoded_metadata));
+  ICEBERG_ASSIGN_OR_RAISE(auto encrypted_by_id,
+                          GetJsonValueOptional<std::string>(json, kEncryptedById));
+  ICEBERG_ASSIGN_OR_RAISE(auto properties,
+                          GetJsonValueOrDefault<StringMap>(json, kProperties));
+  return EncryptedKey{
+      .key_id = std::move(key_id),
+      .encrypted_key_metadata = std::move(encrypted_key_metadata),
+      .encrypted_by_id = std::move(encrypted_by_id),
+      .properties = std::move(properties),
+  };
+}
+
+Result<nlohmann::json> ToJson(const TableMetadata& table_metadata) {
   nlohmann::json json;
 
   json[kFormatVersion] = table_metadata.format_version;
@@ -864,7 +987,7 @@ nlohmann::json ToJson(const TableMetadata& table_metadata) {
   if (table_metadata.format_version == 1) {
     for (const auto& schema : table_metadata.schemas) {
       if (schema->schema_id() == table_metadata.current_schema_id) {
-        json[kSchema] = ToJson(*schema);
+        ICEBERG_ASSIGN_OR_RAISE(json[kSchema], ToJson(*schema));
         break;
       }
     }
@@ -872,7 +995,14 @@ nlohmann::json ToJson(const TableMetadata& table_metadata) {
 
   // write the current schema ID and schema list
   json[kCurrentSchemaId] = table_metadata.current_schema_id;
-  json[kSchemas] = ToJsonList(table_metadata.schemas);
+  // ToJson(Schema) is fallible, so the shared ToJsonList helper (which assumes an
+  // infallible ToJson) cannot be used here; build the array with an explicit loop.
+  nlohmann::json schemas_json = nlohmann::json::array();
+  for (const auto& schema : table_metadata.schemas) {
+    ICEBERG_ASSIGN_OR_RAISE(auto schema_json, ToJson(*schema));
+    schemas_json.push_back(std::move(schema_json));
+  }
+  json[kSchemas] = std::move(schemas_json);
 
   // for older readers, continue writing the default spec as "partition-spec"
   if (table_metadata.format_version == 1) {
@@ -912,6 +1042,9 @@ nlohmann::json ToJson(const TableMetadata& table_metadata) {
   json[kSnapshots] = ToJsonList(table_metadata.snapshots);
   json[kStatistics] = ToJsonList(table_metadata.statistics);
   json[kPartitionStatistics] = ToJsonList(table_metadata.partition_statistics);
+  if (!table_metadata.encryption_keys.empty()) {
+    json[kEncryptionKeys] = ToJsonList(table_metadata.encryption_keys);
+  }
   json[kSnapshotLog] = ToJsonList(table_metadata.snapshot_log);
   json[kMetadataLog] = ToJsonList(table_metadata.metadata_log);
 
@@ -919,7 +1052,8 @@ nlohmann::json ToJson(const TableMetadata& table_metadata) {
 }
 
 Result<std::string> ToJsonString(const TableMetadata& table_metadata) {
-  return ToJsonString(ToJson(table_metadata));
+  ICEBERG_ASSIGN_OR_RAISE(auto json, ToJson(table_metadata));
+  return ToJsonString(json);
 }
 
 namespace {
@@ -949,6 +1083,7 @@ Result<std::shared_ptr<Schema>> ParseSchemas(
     for (const auto& schema_json : schema_array) {
       ICEBERG_ASSIGN_OR_RAISE(std::shared_ptr<Schema> schema,
                               SchemaFromJson(schema_json));
+      ICEBERG_RETURN_UNEXPECTED(schema->Validate(format_version));
       if (schema->schema_id() == current_schema_id) {
         current_schema = schema;
       }
@@ -965,6 +1100,7 @@ Result<std::shared_ptr<Schema>> ParseSchemas(
     ICEBERG_ASSIGN_OR_RAISE(auto schema_json,
                             GetJsonValue<nlohmann::json>(json, kSchema));
     ICEBERG_ASSIGN_OR_RAISE(current_schema, SchemaFromJson(schema_json));
+    ICEBERG_RETURN_UNEXPECTED(current_schema->Validate(format_version));
     current_schema_id = current_schema->schema_id();
     schemas.push_back(current_schema);
   }
@@ -1053,8 +1189,9 @@ Status ParseSortOrders(const nlohmann::json& json, int8_t format_version,
     ICEBERG_ASSIGN_OR_RAISE(auto sort_order_array,
                             GetJsonValue<nlohmann::json>(json, kSortOrders));
     for (const auto& sort_order_json : sort_order_array) {
-      ICEBERG_ASSIGN_OR_RAISE(auto sort_order,
-                              SortOrderFromJson(sort_order_json, current_schema));
+      ICEBERG_ASSIGN_OR_RAISE(
+          auto sort_order,
+          SortOrderFromJson(sort_order_json, current_schema, default_sort_order_id));
       sort_orders.push_back(std::move(sort_order));
     }
   } else {
@@ -1175,6 +1312,9 @@ Result<std::unique_ptr<TableMetadata>> TableMetadataFromJson(const nlohmann::jso
       table_metadata->partition_statistics,
       FromJsonList<PartitionStatisticsFile>(json, kPartitionStatistics,
                                             PartitionStatisticsFileFromJson));
+  ICEBERG_ASSIGN_OR_RAISE(
+      table_metadata->encryption_keys,
+      FromJsonList<EncryptedKey>(json, kEncryptionKeys, EncryptedKeyFromJson));
   ICEBERG_ASSIGN_OR_RAISE(
       table_metadata->snapshot_log,
       FromJsonList<SnapshotLogEntry>(json, kSnapshotLog, SnapshotLogEntryFromJson));
@@ -1317,7 +1457,7 @@ Result<Namespace> NamespaceFromJson(const nlohmann::json& json) {
   return ns;
 }
 
-nlohmann::json ToJson(const TableUpdate& update) {
+Result<nlohmann::json> ToJson(const TableUpdate& update) {
   nlohmann::json json;
   switch (update.kind()) {
     case TableUpdate::Kind::kAssignUUID: {
@@ -1336,7 +1476,7 @@ nlohmann::json ToJson(const TableUpdate& update) {
       const auto& u = internal::checked_cast<const table::AddSchema&>(update);
       json[kAction] = kActionAddSchema;
       if (u.schema()) {
-        json[kSchema] = ToJson(*u.schema());
+        ICEBERG_ASSIGN_OR_RAISE(json[kSchema], ToJson(*u.schema()));
       } else {
         json[kSchema] = nlohmann::json::value_t::null;
       }
@@ -1479,6 +1619,18 @@ nlohmann::json ToJson(const TableUpdate& update) {
       json[kSnapshotId] = u.snapshot_id();
       break;
     }
+    case TableUpdate::Kind::kAddEncryptionKey: {
+      const auto& u = internal::checked_cast<const table::AddEncryptionKey&>(update);
+      json[kAction] = kActionAddEncryptionKey;
+      json[kEncryptionKey] = ToJson(u.key());
+      break;
+    }
+    case TableUpdate::Kind::kRemoveEncryptionKey: {
+      const auto& u = internal::checked_cast<const table::RemoveEncryptionKey&>(update);
+      json[kAction] = kActionRemoveEncryptionKey;
+      json[kKeyId] = u.key_id();
+      break;
+    }
   }
   return json;
 }
@@ -1499,7 +1651,7 @@ nlohmann::json ToJson(const TableRequirement& requirement) {
       const auto& r =
           internal::checked_cast<const table::AssertRefSnapshotID&>(requirement);
       json[kType] = kRequirementAssertRefSnapshotID;
-      json[kRefName] = r.ref_name();
+      json[kRef] = r.ref_name();
       if (r.snapshot_id().has_value()) {
         json[kSnapshotId] = r.snapshot_id().value();
       } else {
@@ -1562,8 +1714,10 @@ Result<std::unique_ptr<TableUpdate>> TableUpdateFromJson(const nlohmann::json& j
     ICEBERG_ASSIGN_OR_RAISE(auto schema_json,
                             GetJsonValue<nlohmann::json>(json, kSchema));
     ICEBERG_ASSIGN_OR_RAISE(auto parsed_schema, SchemaFromJson(schema_json));
-    ICEBERG_ASSIGN_OR_RAISE(auto last_column_id,
-                            GetJsonValue<int32_t>(json, kLastColumnId));
+    ICEBERG_ASSIGN_OR_RAISE(auto highest_field_id, parsed_schema->HighestFieldId());
+    ICEBERG_ASSIGN_OR_RAISE(
+        auto last_column_id,
+        GetJsonValueOrDefault<int32_t>(json, kLastColumnId, highest_field_id));
     return std::make_unique<table::AddSchema>(std::move(parsed_schema), last_column_id);
   }
   if (action == kActionSetCurrentSchema) {
@@ -1642,12 +1796,17 @@ Result<std::unique_ptr<TableUpdate>> TableUpdateFromJson(const nlohmann::json& j
   }
   if (action == kActionSetProperties) {
     using StringMap = std::unordered_map<std::string, std::string>;
-    ICEBERG_ASSIGN_OR_RAISE(auto updates, GetJsonValue<StringMap>(json, kUpdates));
+    ICEBERG_ASSIGN_OR_RAISE(auto updates,
+                            json.contains(kUpdates) || !json.contains(kUpdated)
+                                ? GetJsonValue<StringMap>(json, kUpdates)
+                                : GetJsonValue<StringMap>(json, kUpdated));
     return std::make_unique<table::SetProperties>(std::move(updates));
   }
   if (action == kActionRemoveProperties) {
     ICEBERG_ASSIGN_OR_RAISE(auto removals_vec,
-                            GetJsonValue<std::vector<std::string>>(json, kRemovals));
+                            json.contains(kRemovals) || !json.contains(kRemoved)
+                                ? GetJsonValue<std::vector<std::string>>(json, kRemovals)
+                                : GetJsonValue<std::vector<std::string>>(json, kRemoved));
     std::unordered_set<std::string> removals(
         std::make_move_iterator(removals_vec.begin()),
         std::make_move_iterator(removals_vec.end()));
@@ -1680,6 +1839,17 @@ Result<std::unique_ptr<TableUpdate>> TableUpdateFromJson(const nlohmann::json& j
     ICEBERG_ASSIGN_OR_RAISE(auto snapshot_id, GetJsonValue<int64_t>(json, kSnapshotId));
     return std::make_unique<table::RemovePartitionStatistics>(snapshot_id);
   }
+  if (action == kActionAddEncryptionKey) {
+    if (!json.contains(kEncryptionKey)) {
+      return JsonParseError("Invalid encryption key, must be non-null object: null");
+    }
+    ICEBERG_ASSIGN_OR_RAISE(auto key, EncryptedKeyFromJson(json.at(kEncryptionKey)));
+    return std::make_unique<table::AddEncryptionKey>(std::move(key));
+  }
+  if (action == kActionRemoveEncryptionKey) {
+    ICEBERG_ASSIGN_OR_RAISE(auto key_id, GetJsonValue<std::string>(json, kKeyId));
+    return std::make_unique<table::RemoveEncryptionKey>(std::move(key_id));
+  }
 
   return JsonParseError("Unknown table update action: {}", action);
 }
@@ -1696,7 +1866,7 @@ Result<std::unique_ptr<TableRequirement>> TableRequirementFromJson(
     return std::make_unique<table::AssertUUID>(std::move(uuid));
   }
   if (type == kRequirementAssertRefSnapshotID) {
-    ICEBERG_ASSIGN_OR_RAISE(auto ref_name, GetJsonValue<std::string>(json, kRefName));
+    ICEBERG_ASSIGN_OR_RAISE(auto ref_name, GetJsonValue<std::string>(json, kRef));
     ICEBERG_ASSIGN_OR_RAISE(auto snapshot_id_opt,
                             GetJsonValueOptional<int64_t>(json, kSnapshotId));
     return std::make_unique<table::AssertRefSnapshotID>(std::move(ref_name),

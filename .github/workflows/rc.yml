@@ -16,6 +16,7 @@
 # under the License.
 
 name: RC
+
 on:
   push:
     tags:
@@ -30,11 +31,11 @@ permissions:
 jobs:
   archive:
     name: Archive
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -78,15 +79,15 @@ jobs:
       matrix:
         os:
           - macos-26
-          - ubuntu-24.04
+          - ubuntu-26.04
           # - windows-latest
         include:
-          - os: ubuntu-24.04
+          - os: ubuntu-26.04
             CC: gcc-14
             CXX: g++-14
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -104,13 +105,6 @@ jobs:
         if: ${{ startsWith(matrix.os, 'ubuntu') }}
         shell: bash
         run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
-
-      - name: Install fmt on macOS
-        if: ${{ startsWith(matrix.os, 'macos') }}
-        shell: bash
-        run: |
-          brew install fmt
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix fmt):${CMAKE_PREFIX_PATH:-}" >> "${GITHUB_ENV}"
 
       - name: Verify
         run: |
@@ -136,12 +130,12 @@ jobs:
     if: github.ref_type == 'tag'
     needs:
       - verify
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 

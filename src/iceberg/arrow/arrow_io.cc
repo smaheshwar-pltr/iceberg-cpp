@@ -30,6 +30,7 @@
 #include <arrow/io/interfaces.h>
 #include <arrow/result.h>
 #include <arrow/status.h>
+#include <arrow/util/uri.h>
 
 #include "iceberg/arrow/arrow_io_internal.h"
 #include "iceberg/arrow/arrow_io_util.h"
@@ -377,6 +378,13 @@ class ArrowPositionOutputStream : public PositionOutputStream {
     return position;
   }
 
+  Result<int64_t> StoredLength() const override {
+    if (!output_->closed()) {
+      return Position();
+    }
+    return closed_position_;
+  }
+
   Status Write(std::span<const std::byte> data) override {
     ICEBERG_ASSIGN_OR_RAISE(auto size, ToInt64Length(data.size()));
     ICEBERG_ARROW_RETURN_NOT_OK(output_->Write(data.data(), size));
@@ -392,12 +400,15 @@ class ArrowPositionOutputStream : public PositionOutputStream {
     if (output_->closed()) {
       return {};
     }
+    ICEBERG_ASSIGN_OR_RAISE(auto position, Position());
     ICEBERG_ARROW_RETURN_NOT_OK(output_->Close());
+    closed_position_ = position;
     return {};
   }
 
  private:
   std::shared_ptr<::arrow::io::OutputStream> output_;
+  int64_t closed_position_ = 0;
 };
 
 class ArrowInputFile : public InputFile {
@@ -473,11 +484,26 @@ class ArrowOutputFile : public OutputFile {
 }  // namespace
 
 Result<std::string> ArrowFileSystemFileIO::ResolvePath(const std::string& file_location) {
-  if (file_location.find("://") != std::string::npos) {
-    ICEBERG_ARROW_ASSIGN_OR_RETURN(auto path, arrow_fs_->PathFromUri(file_location));
-    return path;
+  const auto pos = file_location.find("://");
+  if (pos == std::string::npos) {
+    return file_location;
   }
-  return file_location;
+
+  auto path = arrow_fs_->PathFromUri(file_location);
+  if (path.ok()) {
+    return std::move(path).ValueOrDie();
+  }
+
+  // Foreign alias (s3a/s3n): validate via Arrow's parser, then percent-decode the
+  // scheme-less key (substring keeps a Windows drive letter's ':' that host() drops).
+  if (auto parsed = ::arrow::util::Uri::FromString(file_location); !parsed.ok()) {
+    const auto& status = parsed.status();
+    return std::unexpected<Error>{
+        {.kind = ToErrorKind(status), .message = status.ToString()}};
+  }
+  std::string bucket_key = file_location.substr(pos + 3);
+  bucket_key = bucket_key.substr(0, bucket_key.find_first_of("?#"));
+  return ::arrow::util::UriUnescape(bucket_key);
 }
 
 Result<std::shared_ptr<::arrow::io::RandomAccessFile>> OpenArrowInputStream(

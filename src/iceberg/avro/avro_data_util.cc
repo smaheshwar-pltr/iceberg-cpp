@@ -395,10 +395,10 @@ Status AppendPrimitiveValueToBuilder(const ::avro::NodePtr& avro_node,
     }
 
     case TypeId::kDate: {
-      if (avro_node->type() != ::avro::AVRO_INT ||
-          avro_node->logicalType().type() != ::avro::LogicalType::DATE) {
+      if (!IsAvroDateOrPlainInt(avro_node)) {
         return InvalidArgument(
-            "Expected Avro int with DATE logical type for date field, got: {}",
+            "Expected Avro int with DATE logical type or plain int for date field, got: "
+            "{}",
             ToString(avro_node));
       }
       auto* builder = internal::checked_cast<::arrow::Date32Builder*>(array_builder);
@@ -457,6 +457,11 @@ Status AppendFieldToBuilder(const ::avro::NodePtr& avro_node,
                             const SchemaField& projected_field,
                             const arrow::MetadataColumnContext& metadata_context,
                             ::arrow::ArrayBuilder* array_builder) {
+  if (projection.kind == FieldProjection::Kind::kNull) {
+    ICEBERG_ARROW_RETURN_NOT_OK(array_builder->AppendNull());
+    return {};
+  }
+
   if (avro_node->type() == ::avro::AVRO_UNION) {
     size_t branch = avro_datum.unionBranch();
     if (avro_node->leafAt(branch)->type() == ::avro::AVRO_NULL) {
@@ -507,6 +512,9 @@ Status ExtractDatumFromArray(const ::arrow::Array& array, int64_t index,
   }
 
   if (array.IsNull(index)) {
+    if (datum->type() == ::avro::AVRO_NULL) {
+      return {};
+    }
     if (!datum->isUnion()) [[unlikely]] {
       return InvalidSchema("Cannot extract null to non-union type: {}",
                            ::avro::toString(datum->type()));

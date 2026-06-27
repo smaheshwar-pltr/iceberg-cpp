@@ -30,39 +30,46 @@
 #include "iceberg/manifest/manifest_writer.h"
 #include "iceberg/manifest/rolling_manifest_writer.h"
 #include "iceberg/partition_summary_internal.h"
-#include "iceberg/table.h"
+#include "iceberg/table.h"  // IWYU pragma: keep
 #include "iceberg/transaction.h"
 #include "iceberg/util/macros.h"
 #include "iceberg/util/snapshot_util_internal.h"
 #include "iceberg/util/string_util.h"
+#include "iceberg/util/task_group.h"
 #include "iceberg/util/uuid.h"
 
 namespace iceberg {
 
 namespace {
 
-// The Java impl skips updating total if parsing fails. Here we choose to be strict.
 Status UpdateTotal(std::unordered_map<std::string, std::string>& summary,
                    const std::unordered_map<std::string, std::string>& previous_summary,
                    const std::string& total_property, const std::string& added_property,
                    const std::string& deleted_property) {
   auto total_it = previous_summary.find(total_property);
   if (total_it != previous_summary.end()) {
-    ICEBERG_ASSIGN_OR_RAISE(auto new_total,
-                            StringUtils::ParseNumber<int64_t>(total_it->second));
+    auto parsed_total = StringUtils::ParseNumber<int64_t>(total_it->second);
+    if (!parsed_total.has_value()) {
+      return {};
+    }
+    int64_t new_total = parsed_total.value();
 
     auto added_it = summary.find(added_property);
     if (new_total >= 0 && added_it != summary.end()) {
-      ICEBERG_ASSIGN_OR_RAISE(auto added_value,
-                              StringUtils::ParseNumber<int64_t>(added_it->second));
-      new_total += added_value;
+      auto parsed_added = StringUtils::ParseNumber<int64_t>(added_it->second);
+      if (!parsed_added.has_value()) {
+        return {};
+      }
+      new_total += parsed_added.value();
     }
 
     auto deleted_it = summary.find(deleted_property);
     if (new_total >= 0 && deleted_it != summary.end()) {
-      ICEBERG_ASSIGN_OR_RAISE(auto deleted_value,
-                              StringUtils::ParseNumber<int64_t>(deleted_it->second));
-      new_total -= deleted_value;
+      auto parsed_deleted = StringUtils::ParseNumber<int64_t>(deleted_it->second);
+      if (!parsed_deleted.has_value()) {
+        return {};
+      }
+      new_total -= parsed_deleted.value();
     }
 
     if (new_total >= 0) {
@@ -163,7 +170,12 @@ SnapshotUpdate::SnapshotUpdate(std::shared_ptr<TransactionContext> ctx)
       target_manifest_size_bytes_(
           base().properties.Get(TableProperties::kManifestTargetSizeBytes)) {}
 
-// TODO(xxx): write manifests in parallel
+void SnapshotUpdate::SetSummaryProperty(const std::string& property,
+                                        const std::string& value) {
+  summary_.Set(property, value);
+}
+
+// TODO(xxx): Split files into independent rolling-writer groups before parallelizing.
 Result<std::vector<ManifestFile>> SnapshotUpdate::WriteDataManifests(
     std::span<const std::shared_ptr<DataFile>> files,
     const std::shared_ptr<PartitionSpec>& spec,
@@ -178,8 +190,7 @@ Result<std::vector<ManifestFile>> SnapshotUpdate::WriteDataManifests(
        snapshot_id = SnapshotId()]() -> Result<std::unique_ptr<ManifestWriter>> {
         return ManifestWriter::MakeWriter(
             base().format_version, snapshot_id, ManifestPath(), ctx_->table->io(),
-            std::move(spec), std::move(schema), ManifestContent::kData,
-            /*first_row_id=*/base().next_row_id);
+            std::move(spec), std::move(schema), ManifestContent::kData);
       },
       target_manifest_size_bytes_);
 
@@ -190,9 +201,9 @@ Result<std::vector<ManifestFile>> SnapshotUpdate::WriteDataManifests(
   return rolling_writer.ToManifestFiles();
 }
 
-// TODO(xxx): write manifests in parallel
+// TODO(xxx): Split files into independent rolling-writer groups before parallelizing.
 Result<std::vector<ManifestFile>> SnapshotUpdate::WriteDeleteManifests(
-    std::span<const std::shared_ptr<DataFile>> files,
+    std::span<const ContentFileWithSequenceNumber> files,
     const std::shared_ptr<PartitionSpec>& spec) {
   if (files.empty()) {
     return std::vector<ManifestFile>{};
@@ -208,10 +219,9 @@ Result<std::vector<ManifestFile>> SnapshotUpdate::WriteDeleteManifests(
       },
       target_manifest_size_bytes_);
 
-  for (const auto& file : files) {
-    // FIXME: Java impl wrap it with `PendingDeleteFile` and deals with
-    // file->data_sequence_number
-    ICEBERG_RETURN_UNEXPECTED(rolling_writer.WriteAddedEntry(file));
+  for (const auto& entry : files) {
+    ICEBERG_RETURN_UNEXPECTED(
+        rolling_writer.WriteAddedEntry(entry.file, entry.data_sequence_number));
   }
   ICEBERG_RETURN_UNEXPECTED(rolling_writer.Close());
   return rolling_writer.ToManifestFiles();
@@ -232,7 +242,7 @@ Result<SnapshotUpdate::ApplyResult> SnapshotUpdate::Apply() {
       std::ignore = DeleteFile(manifest_list);
     }
     manifest_lists_.clear();
-    CleanUncommitted(std::unordered_set<std::string>{});
+    ICEBERG_RETURN_UNEXPECTED(CleanUncommitted(std::unordered_set<std::string>{}));
 
     staged_snapshot_ = nullptr;
     summary_.Clear();
@@ -245,18 +255,20 @@ Result<SnapshotUpdate::ApplyResult> SnapshotUpdate::Apply() {
   std::optional<int64_t> parent_snapshot_id =
       parent_snapshot ? std::make_optional(parent_snapshot->snapshot_id) : std::nullopt;
 
-  if (parent_snapshot) {
-    ICEBERG_RETURN_UNEXPECTED(Validate(base(), parent_snapshot));
-  }
+  ICEBERG_RETURN_UNEXPECTED(Validate(base(), parent_snapshot));
 
   ICEBERG_ASSIGN_OR_RAISE(auto manifests, Apply(base(), parent_snapshot));
+  auto metadata_tasks = TaskGroup().SetExecutor(plan_executor_);
   for (auto& manifest : manifests) {
     if (manifest.added_snapshot_id != kInvalidSnapshotId) {
       continue;
     }
-    // TODO(xxx): read in parallel and cache enriched manifests for retries
-    ICEBERG_ASSIGN_OR_RAISE(manifest, AddMetadata(manifest, ctx_->table->io(), base()));
+    metadata_tasks.Submit([&manifest, this]() -> Status {
+      ICEBERG_ASSIGN_OR_RAISE(manifest, AddMetadata(manifest, ctx_->table->io(), base()));
+      return {};
+    });
   }
+  ICEBERG_RETURN_UNEXPECTED(std::move(metadata_tasks).Run());
 
   std::string manifest_list_path = ManifestListPath();
   manifest_lists_.push_back(manifest_list_path);
@@ -314,7 +326,7 @@ Status SnapshotUpdate::Finalize(Result<const TableMetadata*> commit_result) {
     if (commit_result.error().kind == ErrorKind::kCommitStateUnknown) {
       return {};
     }
-    CleanAll();
+    std::ignore = CleanAll();
     return {};
   }
 
@@ -322,11 +334,14 @@ Status SnapshotUpdate::Finalize(Result<const TableMetadata*> commit_result) {
     ICEBERG_CHECK(staged_snapshot_ != nullptr,
                   "Staged snapshot is null during finalize after commit");
     auto cached_snapshot = SnapshotCache(staged_snapshot_.get());
-    ICEBERG_ASSIGN_OR_RAISE(auto manifests, cached_snapshot.Manifests(ctx_->table->io()));
-    CleanUncommitted(manifests | std::views::transform([](const auto& manifest) {
-                       return manifest.manifest_path;
-                     }) |
-                     std::ranges::to<std::unordered_set<std::string>>());
+    if (auto manifests = cached_snapshot.Manifests(ctx_->table->io());
+        manifests.has_value()) {
+      std::ignore = CleanUncommitted(manifests.value() |
+                                     std::views::transform([](const auto& manifest) {
+                                       return manifest.manifest_path;
+                                     }) |
+                                     std::ranges::to<std::unordered_set<std::string>>());
+    }
   }
 
   // Also clean up unused manifest lists created by multiple attempts
@@ -389,38 +404,59 @@ Result<std::unordered_map<std::string, std::string>> SnapshotUpdate::ComputeSumm
   return summary;
 }
 
-void SnapshotUpdate::CleanAll() {
+Status SnapshotUpdate::CleanAll() {
   for (const auto& manifest_list : manifest_lists_) {
     std::ignore = DeleteFile(manifest_list);
   }
   manifest_lists_.clear();
-  CleanUncommitted(std::unordered_set<std::string>{});
+  std::ignore = CleanUncommitted(std::unordered_set<std::string>{});
+  return {};
 }
 
 Status SnapshotUpdate::DeleteFile(const std::string& path) {
-  static const auto kDefaultDeleteFunc = [this](const std::string& path) {
-    return this->ctx_->table->io()->DeleteFile(path);
-  };
   if (delete_func_) {
     return delete_func_(path);
-  } else {
-    return kDefaultDeleteFunc(path);
   }
+  return ctx_->table->io()->DeleteFile(path);
 }
 
 std::string SnapshotUpdate::ManifestListPath() {
   // Generate manifest list path
   // Format: {metadata_location}/snap-{snapshot_id}-{attempt}-{uuid}.avro
   int64_t snapshot_id = SnapshotId();
+  auto attempt = attempt_.fetch_add(1, std::memory_order_relaxed) + 1;
   std::string filename =
-      std::format("snap-{}-{}-{}.avro", snapshot_id, ++attempt_, commit_uuid_);
+      std::format("snap-{}-{}-{}.avro", snapshot_id, attempt, commit_uuid_);
   return ctx_->MetadataFileLocation(filename);
+}
+
+SnapshotSummaryBuilder SnapshotUpdate::BuildManifestCountSummary(
+    std::span<const ManifestFile> manifests, int32_t replaced_manifests_count) {
+  SnapshotSummaryBuilder summary;
+  int32_t manifests_created = 0;
+  int32_t manifests_kept = 0;
+  int64_t snapshot_id = SnapshotId();
+  for (const auto& manifest : manifests) {
+    if (manifest.added_snapshot_id == snapshot_id) {
+      ++manifests_created;
+    } else if (manifest.added_snapshot_id != kInvalidSnapshotId) {
+      ++manifests_kept;
+    }
+  }
+
+  summary.Set(SnapshotSummaryFields::kManifestsCreated,
+              std::to_string(manifests_created));
+  summary.Set(SnapshotSummaryFields::kManifestsKept, std::to_string(manifests_kept));
+  summary.Set(SnapshotSummaryFields::kManifestsReplaced,
+              std::to_string(replaced_manifests_count));
+  return summary;
 }
 
 std::string SnapshotUpdate::ManifestPath() {
   // Generate manifest path
   // Format: {metadata_location}/{uuid}-m{manifest_count}.avro
-  std::string filename = std::format("{}-m{}.avro", commit_uuid_, manifest_count_++);
+  auto manifest_count = manifest_count_.fetch_add(1, std::memory_order_relaxed);
+  std::string filename = std::format("{}-m{}.avro", commit_uuid_, manifest_count);
   return ctx_->MetadataFileLocation(filename);
 }
 

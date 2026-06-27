@@ -23,6 +23,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "iceberg/catalog/rest/http_request.h"
 #include "iceberg/catalog/rest/iceberg_rest_export.h"
 #include "iceberg/catalog/rest/type_fwd.h"
 #include "iceberg/result.h"
@@ -37,20 +38,21 @@ class ICEBERG_REST_EXPORT AuthSession {
  public:
   virtual ~AuthSession() = default;
 
-  /// \brief Authenticate the given request headers.
+  /// \brief Authenticate an outgoing HTTP request.
   ///
-  /// This method adds authentication information (e.g., Authorization header)
-  /// to the provided headers map. The implementation should be idempotent.
+  /// Returns a request with authentication information (e.g., an Authorization
+  /// header) added. Implementations must be idempotent. The request is passed
+  /// by value so callers can move request bodies into the authentication path.
   ///
-  /// \param[in,out] headers The headers map to add authentication information to.
-  /// \return Status indicating success or one of the following errors:
+  /// \param request The request to authenticate.
+  /// \return The authenticated request on success, or one of:
   ///         - AuthenticationFailed: General authentication failure (invalid credentials,
   ///         etc.)
   ///         - TokenExpired: Authentication token has expired and needs refresh
   ///         - NotAuthorized: Not authenticated (401)
   ///         - IOError: Network or connection errors when reaching auth server
   ///         - RestError: HTTP errors from authentication service
-  virtual Status Authenticate(std::unordered_map<std::string, std::string>& headers) = 0;
+  virtual Result<HttpRequest> Authenticate(HttpRequest request) = 0;
 
   /// \brief Close the session and release any resources.
   ///
@@ -74,24 +76,27 @@ class ICEBERG_REST_EXPORT AuthSession {
 
   /// \brief Create an OAuth2 session with automatic token refresh.
   ///
-  /// This factory method creates a session that holds an access token and
-  /// optionally a refresh token. When Authenticate() is called and the token
-  /// is expired, it transparently refreshes the token before setting the
-  /// Authorization header.
+  /// This factory method creates a session that holds an access token and,
+  /// when keep_refreshed is enabled, schedules background refresh based on
+  /// token expiration. Authenticate() uses the latest cached Authorization
+  /// header and does not perform a synchronous token refresh.
   ///
   /// \param initial_token The initial token response from FetchToken().
   /// \param token_endpoint Full URL of the OAuth2 token endpoint for refresh.
   /// \param client_id OAuth2 client ID for refresh requests.
   /// \param client_secret OAuth2 client secret for re-fetch if refresh fails.
   /// \param scope OAuth2 scope for refresh requests.
-  /// \param client HTTP client for making refresh requests.
+  /// \param keep_refreshed Whether to schedule automatic token refresh.
+  /// \param optional_oauth_params Optional OAuth params (audience, resource) for refresh.
+  /// \param client HTTP client for making refresh requests. The caller owns the
+  ///        client and must keep it alive until the session is closed.
   /// \return A new session that manages token lifecycle automatically.
-  static std::shared_ptr<AuthSession> MakeOAuth2(const OAuthTokenResponse& initial_token,
-                                                 const std::string& token_endpoint,
-                                                 const std::string& client_id,
-                                                 const std::string& client_secret,
-                                                 const std::string& scope,
-                                                 HttpClient& client);
+  static Result<std::shared_ptr<AuthSession>> MakeOAuth2(
+      const OAuthTokenResponse& initial_token, const std::string& token_endpoint,
+      const std::string& client_id, const std::string& client_secret,
+      const std::string& scope, bool keep_refreshed,
+      const std::unordered_map<std::string, std::string>& optional_oauth_params,
+      HttpClient& client);
 };
 
 }  // namespace iceberg::rest::auth

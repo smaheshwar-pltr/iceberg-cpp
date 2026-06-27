@@ -19,8 +19,14 @@
 
 #include "iceberg/catalog/rest/auth/auth_manager.h"
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -30,10 +36,14 @@
 #include "iceberg/catalog/rest/auth/auth_properties.h"
 #include "iceberg/catalog/rest/auth/auth_session.h"
 #include "iceberg/catalog/rest/auth/oauth2_util.h"
+#include "iceberg/catalog/rest/auth/token_refresh_scheduler.h"
+#include "iceberg/catalog/rest/error_handlers.h"
 #include "iceberg/catalog/rest/http_client.h"
 #include "iceberg/catalog/rest/json_serde_internal.h"
+#include "iceberg/catalog/session_context.h"
 #include "iceberg/json_serde_internal.h"
 #include "iceberg/test/matchers.h"
+#include "iceberg/util/base64.h"
 
 namespace iceberg::rest::auth {
 
@@ -43,6 +53,13 @@ namespace {
 Result<OAuthTokenResponse> ParseTokenResponse(const std::string& str) {
   ICEBERG_ASSIGN_OR_RAISE(auto json, iceberg::FromJsonString(str));
   return iceberg::rest::FromJson<OAuthTokenResponse>(json);
+}
+
+std::string MakeJwt(const std::string& payload_json) {
+  std::string header = R"({"alg":"HS256","typ":"JWT"})";
+  std::string signature = "test-signature";
+  return Base64::UrlEncode(header) + "." + Base64::UrlEncode(payload_json) + "." +
+         Base64::UrlEncode(signature);
 }
 
 }  // namespace
@@ -63,15 +80,49 @@ TEST_F(AuthManagerTest, LoadNoopAuthManagerExplicit) {
   auto session_result = manager_result.value()->CatalogSession(client_, properties);
   ASSERT_THAT(session_result, IsOk());
 
-  std::unordered_map<std::string, std::string> headers;
-  EXPECT_THAT(session_result.value()->Authenticate(headers), IsOk());
-  EXPECT_TRUE(headers.empty());
+  auto auth_result = session_result.value()->Authenticate({});
+  ASSERT_THAT(auth_result, IsOk());
+  EXPECT_TRUE(auth_result.value().headers.empty());
 }
 
 // Verifies that NoopAuthManager is inferred when no auth properties are set
 TEST_F(AuthManagerTest, LoadNoopAuthManagerInferred) {
   auto manager_result = AuthManagers::Load("test-catalog", {});
   ASSERT_THAT(manager_result, IsOk());
+}
+
+TEST_F(AuthManagerTest, NoopContextualSessionReturnsParentSession) {
+  ICEBERG_UNWRAP_OR_FAIL(auto manager, AuthManagers::Load("test-catalog", {}));
+  ICEBERG_UNWRAP_OR_FAIL(auto parent, manager->CatalogSession(client_, {}));
+
+  SessionContext context{
+      .session_id = "tenant-a",
+      .identity = "user-a",
+      .credentials = {{"credential-key", "credential-value"}},
+      .properties = {{"property-key", "property-value"}},
+  };
+  ICEBERG_UNWRAP_OR_FAIL(auto contextual, manager->ContextualSession(context, parent));
+
+  EXPECT_EQ(contextual, parent);
+}
+
+TEST_F(AuthManagerTest, HttpHeadersAreCaseInsensitiveSingleValueMap) {
+  HttpHeaders headers;
+  headers.emplace("Authorization", "Bearer first");
+  headers.emplace("authorization", "Bearer second");
+
+  EXPECT_EQ(headers.size(), 1);
+  EXPECT_EQ(headers.at("AUTHORIZATION"), "Bearer first");
+}
+
+TEST_F(AuthManagerTest, HttpClientRejectsParamsWhenUrlAlreadyHasQuery) {
+  auto session = AuthSession::MakeDefault({});
+  auto result =
+      client_.Get("http://127.0.0.1/v1/config?existing=true", {{"warehouse", "prod"}},
+                  /*headers=*/{}, *rest::DefaultErrorHandler::Instance(), *session);
+
+  EXPECT_THAT(result, IsError(ErrorKind::kInvalidArgument));
+  EXPECT_THAT(result, HasErrorMessage("must not contain a query string"));
 }
 
 // Verifies that auth type is case-insensitive
@@ -107,10 +158,10 @@ TEST_F(AuthManagerTest, LoadBasicAuthManager) {
   auto session_result = manager_result.value()->CatalogSession(client_, properties);
   ASSERT_THAT(session_result, IsOk());
 
-  std::unordered_map<std::string, std::string> headers;
-  EXPECT_THAT(session_result.value()->Authenticate(headers), IsOk());
+  auto auth_result = session_result.value()->Authenticate({});
+  ASSERT_THAT(auth_result, IsOk());
   // base64("admin:secret") == "YWRtaW46c2VjcmV0"
-  EXPECT_EQ(headers["Authorization"], "Basic YWRtaW46c2VjcmV0");
+  EXPECT_EQ(auth_result.value().headers["Authorization"], "Basic YWRtaW46c2VjcmV0");
 }
 
 // Verifies BasicAuthManager is case-insensitive for auth type
@@ -126,10 +177,10 @@ TEST_F(AuthManagerTest, BasicAuthTypeCaseInsensitive) {
     auto session_result = manager_result.value()->CatalogSession(client_, properties);
     ASSERT_THAT(session_result, IsOk()) << "Failed for auth type: " << auth_type;
 
-    std::unordered_map<std::string, std::string> headers;
-    EXPECT_THAT(session_result.value()->Authenticate(headers), IsOk());
+    auto auth_result = session_result.value()->Authenticate({});
+    ASSERT_THAT(auth_result, IsOk()) << "Failed for auth type: " << auth_type;
     // base64("user:pass") == "dXNlcjpwYXNz"
-    EXPECT_EQ(headers["Authorization"], "Basic dXNlcjpwYXNz");
+    EXPECT_EQ(auth_result.value().headers["Authorization"], "Basic dXNlcjpwYXNz");
   }
 }
 
@@ -172,10 +223,11 @@ TEST_F(AuthManagerTest, BasicAuthSpecialCharacters) {
   auto session_result = manager_result.value()->CatalogSession(client_, properties);
   ASSERT_THAT(session_result, IsOk());
 
-  std::unordered_map<std::string, std::string> headers;
-  EXPECT_THAT(session_result.value()->Authenticate(headers), IsOk());
+  auto auth_result = session_result.value()->Authenticate({});
+  ASSERT_THAT(auth_result, IsOk());
   // base64("user@domain.com:p@ss:w0rd!") == "dXNlckBkb21haW4uY29tOnBAc3M6dzByZCE="
-  EXPECT_EQ(headers["Authorization"], "Basic dXNlckBkb21haW4uY29tOnBAc3M6dzByZCE=");
+  EXPECT_EQ(auth_result.value().headers["Authorization"],
+            "Basic dXNlckBkb21haW4uY29tOnBAc3M6dzByZCE=");
 }
 
 // Verifies custom auth manager registration
@@ -204,9 +256,9 @@ TEST_F(AuthManagerTest, RegisterCustomAuthManager) {
   auto session_result = manager_result.value()->CatalogSession(client_, properties);
   ASSERT_THAT(session_result, IsOk());
 
-  std::unordered_map<std::string, std::string> headers;
-  EXPECT_THAT(session_result.value()->Authenticate(headers), IsOk());
-  EXPECT_EQ(headers["X-Custom-Auth"], "custom-value");
+  auto auth_result = session_result.value()->Authenticate({});
+  ASSERT_THAT(auth_result, IsOk());
+  EXPECT_EQ(auth_result.value().headers["X-Custom-Auth"], "custom-value");
 }
 
 // Verifies OAuth2 with static token
@@ -222,9 +274,9 @@ TEST_F(AuthManagerTest, OAuth2StaticToken) {
   auto session_result = manager_result.value()->CatalogSession(client_, properties);
   ASSERT_THAT(session_result, IsOk());
 
-  std::unordered_map<std::string, std::string> headers;
-  EXPECT_THAT(session_result.value()->Authenticate(headers), IsOk());
-  EXPECT_EQ(headers["Authorization"], "Bearer my-static-token");
+  auto auth_result = session_result.value()->Authenticate({});
+  ASSERT_THAT(auth_result, IsOk());
+  EXPECT_EQ(auth_result.value().headers["Authorization"], "Bearer my-static-token");
 }
 
 // Verifies OAuth2 type is inferred from token property
@@ -239,9 +291,9 @@ TEST_F(AuthManagerTest, OAuth2InferredFromToken) {
   auto session_result = manager_result.value()->CatalogSession(client_, properties);
   ASSERT_THAT(session_result, IsOk());
 
-  std::unordered_map<std::string, std::string> headers;
-  EXPECT_THAT(session_result.value()->Authenticate(headers), IsOk());
-  EXPECT_EQ(headers["Authorization"], "Bearer inferred-token");
+  auto auth_result = session_result.value()->Authenticate({});
+  ASSERT_THAT(auth_result, IsOk());
+  EXPECT_EQ(auth_result.value().headers["Authorization"], "Bearer inferred-token");
 }
 
 // Verifies OAuth2 returns unauthenticated session when neither token nor credential is
@@ -258,9 +310,10 @@ TEST_F(AuthManagerTest, OAuth2MissingCredentials) {
   ASSERT_THAT(session_result, IsOk());
 
   // Session should have no auth headers
-  std::unordered_map<std::string, std::string> headers;
-  ASSERT_TRUE(session_result.value()->Authenticate(headers).has_value());
-  EXPECT_EQ(headers.find("Authorization"), headers.end());
+  auto auth_result = session_result.value()->Authenticate({});
+  ASSERT_TRUE(auth_result.has_value());
+  EXPECT_EQ(auth_result.value().headers.find("Authorization"),
+            auth_result.value().headers.end());
 }
 
 // Verifies that when both token and credential are provided, token takes priority
@@ -279,9 +332,9 @@ TEST_F(AuthManagerTest, OAuth2TokenTakesPriorityOverCredential) {
   auto session_result = manager_result.value()->CatalogSession(client_, properties);
   ASSERT_THAT(session_result, IsOk());
 
-  std::unordered_map<std::string, std::string> headers;
-  ASSERT_THAT(session_result.value()->Authenticate(headers), IsOk());
-  EXPECT_EQ(headers["Authorization"], "Bearer my-static-token");
+  auto auth_result = session_result.value()->Authenticate({});
+  ASSERT_THAT(auth_result, IsOk());
+  EXPECT_EQ(auth_result.value().headers["Authorization"], "Bearer my-static-token");
 }
 
 // Verifies OAuthTokenResponse JSON parsing
@@ -356,6 +409,134 @@ TEST_F(AuthManagerTest, OAuthTokenResponseNATokenType) {
   auto result = ParseTokenResponse(json);
   ASSERT_THAT(result, IsOk());
   EXPECT_EQ(result->token_type, "N_A");
+}
+
+// ---- ExpiresAtMillis tests ----
+
+TEST_F(AuthManagerTest, ExpiresAtMillisValidJwt) {
+  std::string token = MakeJwt(R"({"sub":"user","exp":1700000000})");
+
+  auto result = ExpiresAtMillis(token);
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result.value(), 1700000000LL * 1000);
+}
+
+TEST_F(AuthManagerTest, ExpiresAtMillisInvalidTokensReturnNullopt) {
+  std::vector<std::string> tokens = {
+      "",
+      "just-a-plain-token",
+      "part1.part2",
+      "a.b.c.d",
+      MakeJwt(R"({"sub":"user","iat":1700000000})"),
+      MakeJwt(R"({"exp":"not-a-number"})"),
+      "eyJhbGciOiJIUzI1NiJ9.!!!invalid!!!.signature",
+      Base64::UrlEncode(R"({"alg":"HS256"})") + "." +
+          Base64::UrlEncode("this is not json") + ".sig",
+  };
+
+  for (const auto& token : tokens) {
+    EXPECT_FALSE(ExpiresAtMillis(token).has_value()) << token;
+  }
+}
+
+// ---- TokenRefreshScheduler tests ----
+
+// Verifies that a scheduled task fires after the specified delay
+TEST(TokenRefreshSchedulerTest, ScheduleFiresAfterDelay) {
+  TokenRefreshScheduler scheduler;
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool fired = false;
+
+  scheduler.Schedule(std::chrono::milliseconds(50), [&] {
+    {
+      std::lock_guard lock(mutex);
+      fired = true;
+    }
+    cv.notify_one();
+  });
+
+  {
+    std::unique_lock lock(mutex);
+    EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return fired; }));
+  }
+
+  scheduler.Shutdown();
+}
+
+// Verifies that cancelling a task prevents it from executing
+TEST(TokenRefreshSchedulerTest, CancelPreventsExecution) {
+  TokenRefreshScheduler scheduler;
+  std::atomic<bool> fired{false};
+
+  auto handle =
+      scheduler.Schedule(std::chrono::milliseconds(100), [&] { fired.store(true); });
+
+  // Cancel before it fires
+  scheduler.Cancel(handle);
+
+  // Wait past the scheduled time
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  EXPECT_FALSE(fired.load());
+
+  scheduler.Shutdown();
+}
+
+// Verifies that shutdown with pending tasks does not crash
+TEST(TokenRefreshSchedulerTest, ShutdownWithPendingTasks) {
+  TokenRefreshScheduler scheduler;
+  std::atomic<bool> fired{false};
+
+  scheduler.Schedule(std::chrono::milliseconds(5000), [&] { fired.store(true); });
+
+  // Shutdown immediately — should not crash and task should not fire
+  scheduler.Shutdown();
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  EXPECT_FALSE(fired.load());
+}
+
+// Verifies that Schedule after shutdown returns invalid handle (0)
+TEST(TokenRefreshSchedulerTest, ScheduleAfterShutdownIsNoop) {
+  TokenRefreshScheduler scheduler;
+  scheduler.Shutdown();
+
+  auto handle = scheduler.Schedule(std::chrono::milliseconds(10), [] {});
+  EXPECT_EQ(0u, handle);
+}
+
+// Verifies that cancelling an invalid handle does not crash
+TEST(TokenRefreshSchedulerTest, CancelInvalidHandleIsNoop) {
+  TokenRefreshScheduler scheduler;
+  // Should not crash
+  scheduler.Cancel(0);
+  scheduler.Cancel(999);
+  scheduler.Shutdown();
+}
+
+// ---- OAuth2AuthSession tests ----
+
+TEST(OAuth2AuthSessionTest, InitialTokenIsUsed) {
+  HttpClient client({});
+  OAuthTokenResponse token_response;
+  token_response.access_token = "initial-token-123";
+  token_response.token_type = "bearer";
+  token_response.expires_in_secs = 3600;
+
+  // Create session (refresh will fail since there's no real server, but
+  // initial token should work)
+  auto session_result =
+      AuthSession::MakeOAuth2(token_response, "http://localhost/oauth/tokens",
+                              "client_id", "client_secret", "catalog", true, {}, client);
+  ASSERT_THAT(session_result, IsOk());
+  auto session = session_result.value();
+
+  auto auth_result = session->Authenticate({});
+  ASSERT_THAT(auth_result, IsOk());
+  EXPECT_EQ(auth_result.value().headers.at("Authorization"), "Bearer initial-token-123");
+
+  session->Close();
 }
 
 }  // namespace iceberg::rest::auth
