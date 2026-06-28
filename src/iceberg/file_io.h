@@ -26,6 +26,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "iceberg/iceberg_export.h"
@@ -177,6 +178,12 @@ class ICEBERG_EXPORT FileIO {
 
   /// \brief Return storage-credential support when implemented by this FileIO.
   virtual SupportsStorageCredentials* AsSupportsStorageCredentials() { return nullptr; }
+
+  /// \brief Return this FileIO's configuration properties (empty by default).
+  virtual const std::unordered_map<std::string, std::string>& properties() const {
+    static const std::unordered_map<std::string, std::string> kEmpty;
+    return kEmpty;
+  }
 };
 
 /// \brief Mix-in for FileIO implementations that route object paths to
