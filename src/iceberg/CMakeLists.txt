@@ -18,8 +18,9 @@
 set(ICEBERG_INCLUDES "$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/src>"
                      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>")
 set(ICEBERG_SOURCES
-    arrow_c_data_util.cc
     arrow_c_data_guard_internal.cc
+    arrow_c_data_util.cc
+    arrow_row_builder.cc
     catalog/memory/in_memory_catalog.cc
     catalog/session_catalog.cc
     catalog/session_context.cc
@@ -108,6 +109,7 @@ set(ICEBERG_SOURCES
     update/merging_snapshot_update.cc
     update/overwrite_files.cc
     update/pending_update.cc
+    update/rewrite_files.cc
     update/row_delta.cc
     update/set_snapshot.cc
     update/snapshot_manager.cc
@@ -152,23 +154,27 @@ list(APPEND
      "$<IF:$<BOOL:${NANOARROW_VENDORED}>,nanoarrow::nanoarrow_static,$<IF:$<TARGET_EXISTS:nanoarrow::nanoarrow_static>,nanoarrow::nanoarrow_static,nanoarrow::nanoarrow_shared>>"
      nlohmann_json::nlohmann_json
      spdlog::spdlog
+     utf8proc::utf8proc
      ZLIB::ZLIB)
 list(APPEND
      ICEBERG_SHARED_BUILD_INTERFACE_LIBS
      "$<IF:$<BOOL:${NANOARROW_VENDORED}>,nanoarrow::nanoarrow_static,$<IF:$<TARGET_EXISTS:nanoarrow::nanoarrow_shared>,nanoarrow::nanoarrow_shared,nanoarrow::nanoarrow_static>>"
      nlohmann_json::nlohmann_json
      spdlog::spdlog
+     utf8proc::utf8proc
      ZLIB::ZLIB)
 list(APPEND
      ICEBERG_STATIC_INSTALL_INTERFACE_LIBS
      "$<IF:$<BOOL:${NANOARROW_VENDORED}>,iceberg::nanoarrow_static,$<IF:$<TARGET_EXISTS:nanoarrow::nanoarrow_static>,nanoarrow::nanoarrow_static,nanoarrow::nanoarrow_shared>>"
      "$<IF:$<BOOL:${NLOHMANN_JSON_VENDORED}>,iceberg::nlohmann_json,$<IF:$<TARGET_EXISTS:nlohmann_json::nlohmann_json>,nlohmann_json::nlohmann_json,nlohmann_json::nlohmann_json>>"
-     "$<IF:$<BOOL:${SPDLOG_VENDORED}>,iceberg::spdlog,spdlog::spdlog>")
+     "$<IF:$<BOOL:${SPDLOG_VENDORED}>,iceberg::spdlog,spdlog::spdlog>"
+     "$<IF:$<BOOL:${UTF8PROC_VENDORED}>,iceberg::utf8proc,utf8proc::utf8proc>")
 list(APPEND
      ICEBERG_SHARED_INSTALL_INTERFACE_LIBS
      "$<IF:$<BOOL:${NANOARROW_VENDORED}>,iceberg::nanoarrow_static,$<IF:$<TARGET_EXISTS:nanoarrow::nanoarrow_shared>,nanoarrow::nanoarrow_shared,nanoarrow::nanoarrow_static>>"
      "$<IF:$<BOOL:${NLOHMANN_JSON_VENDORED}>,iceberg::nlohmann_json,$<IF:$<TARGET_EXISTS:nlohmann_json::nlohmann_json>,nlohmann_json::nlohmann_json,nlohmann_json::nlohmann_json>>"
-     "$<IF:$<BOOL:${SPDLOG_VENDORED}>,iceberg::spdlog,spdlog::spdlog>")
+     "$<IF:$<BOOL:${SPDLOG_VENDORED}>,iceberg::spdlog,spdlog::spdlog>"
+     "$<IF:$<BOOL:${UTF8PROC_VENDORED}>,iceberg::utf8proc,utf8proc::utf8proc>")
 
 add_iceberg_lib(iceberg
                 SOURCES
@@ -190,6 +196,8 @@ set(ICEBERG_DATA_SOURCES
     data/data_writer.cc
     data/delete_filter.cc
     data/delete_loader.cc
+    data/deletion_vector_writer.cc
+    data/dv_util.cc
     data/equality_delete_writer.cc
     data/file_scan_task_reader.cc
     data/position_delete_writer.cc
@@ -261,6 +269,7 @@ if(ICEBERG_BUILD_BUNDLE)
       arrow/arrow_io.cc
       arrow/s3/arrow_s3_file_io.cc
       arrow/arrow_register.cc
+      arrow/literal_util.cc
       arrow/metadata_column_util.cc
       avro/avro_data_util.cc
       avro/avro_direct_decoder.cc
@@ -357,4 +366,8 @@ endif()
 
 if(ICEBERG_BUILD_TESTS)
   add_subdirectory(test)
+endif()
+
+if(ICEBERG_BUILD_BENCHMARKS)
+  add_subdirectory(benchmark)
 endif()

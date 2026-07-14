@@ -19,6 +19,9 @@
 
 #pragma once
 
+/// \file iceberg/table_scan.h
+/// \brief Define table scan APIs and scan task types.
+
 #include <functional>
 #include <memory>
 #include <optional>
@@ -392,11 +395,13 @@ class ICEBERG_TEMPLATE_CLASS_EXPORT TableScanBuilder : public ErrorCollector {
 
   // Return the schema bound to the specified snapshot.
   Result<std::reference_wrapper<const std::shared_ptr<Schema>>> ResolveSnapshotSchema();
+  Status ResolveColumnStatsSelection();
 
   std::shared_ptr<TableMetadata> metadata_;
   std::shared_ptr<FileIO> io_;
   internal::TableScanContext context_;
   std::shared_ptr<Schema> snapshot_schema_;
+  std::optional<std::vector<std::string>> requested_column_stats_;
 };
 
 /// \brief Represents a configured scan operation on a table.

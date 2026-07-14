@@ -104,6 +104,7 @@ class GeometryType;
 
 /// \brief Data values.
 class Decimal;
+class Literal;
 class Uuid;
 
 /// \brief Schema.
@@ -245,6 +246,7 @@ class FastAppend;
 class MergeAppend;
 class OverwriteFiles;
 class PendingUpdate;
+class RewriteFiles;
 class RowDelta;
 class SetSnapshot;
 class SnapshotManager;

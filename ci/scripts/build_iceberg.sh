@@ -17,7 +17,7 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-# Usage: build_iceberg.sh <source_dir> [rest_integration_tests=OFF] [sccache=OFF] [s3=OFF] [sigv4=OFF] [bundle_awssdk=ON]
+# Usage: build_iceberg.sh <source_dir> [rest_integration_tests=OFF] [sccache=OFF] [s3=OFF] [sigv4=OFF] [bundle_awssdk=ON] [build_type=Debug]
 
 set -eux
 
@@ -36,6 +36,8 @@ pushd ${build_dir}
 is_windows() {
     [[ "${OSTYPE}" == "msys" || "${OSTYPE}" == "win32" || "${OSTYPE}" == "cygwin" ]]
 }
+
+build_type=${7:-Debug}
 
 CMAKE_ARGS=(
     "-G Ninja"
@@ -64,15 +66,15 @@ else
 fi
 
 if is_windows; then
-    CMAKE_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
-    CMAKE_ARGS+=("-DCMAKE_BUILD_TYPE=Release")
-else
-    # Pass an externally provided toolchain (e.g. vcpkg for the SigV4 job)
-    if [[ -n "${CMAKE_TOOLCHAIN_FILE:-}" ]]; then
-        CMAKE_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
-    fi
-    CMAKE_ARGS+=("-DCMAKE_BUILD_TYPE=Debug")
+    CMAKE_TOOLCHAIN_FILE="${CMAKE_TOOLCHAIN_FILE:-C:/vcpkg/scripts/buildsystems/vcpkg.cmake}"
 fi
+
+# Pass an externally provided toolchain, or the default Windows vcpkg toolchain.
+if [[ -n "${CMAKE_TOOLCHAIN_FILE:-}" ]]; then
+    CMAKE_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
+fi
+
+CMAKE_ARGS+=("-DCMAKE_BUILD_TYPE=${build_type}")
 
 if [[ "${build_enable_sccache}" == "ON" ]]; then
     CMAKE_ARGS+=("-DCMAKE_CXX_COMPILER_LAUNCHER=sccache")
@@ -85,19 +87,23 @@ if [[ -n "${ICEBERG_EXTRA_CMAKE_ARGS:-}" ]]; then
 fi
 
 cmake "${CMAKE_ARGS[@]}" ${source_dir}
-if is_windows; then
-  cmake --build . --config Release --target install
-  if [[ "${run_tests}" == "ON" ]]; then
-    ctest --output-on-failure -C Release
-  fi
-else
-  cmake --build . --target install
-  if [[ "${run_tests}" == "ON" ]]; then
+
+cmake --build . --target install
+if [[ "${run_tests}" == "ON" ]]; then
     ctest --output-on-failure
-  fi
 fi
 
 popd
 
-# clean up between builds
-rm -rf ${build_dir}
+# Clean up after the build. Windows can briefly hold a just-built exe/dll,
+# so retry but do not fail an otherwise successful CI job.
+for attempt in 1 2 3; do
+    if rm -rf "${build_dir}"; then
+        break
+    fi
+    if [[ "${attempt}" != "3" ]]; then
+        sleep 2
+    else
+        echo "Failed to remove build directory after 3 attempts: ${build_dir}" >&2
+    fi
+done

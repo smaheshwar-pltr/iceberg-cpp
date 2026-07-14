@@ -59,6 +59,7 @@ iceberg_tests = {
             'table_requirements_test.cc',
             'table_test.cc',
             'table_update_test.cc',
+            'update_schema_test.cc',
         ),
     },
     'logging_test': {
@@ -123,6 +124,7 @@ iceberg_tests = {
     },
     'puffin_test': {
         'sources': files(
+            'deletion_vector_writer_test.cc',
             'puffin_format_test.cc',
             'puffin_json_test.cc',
             'puffin_reader_writer_test.cc',

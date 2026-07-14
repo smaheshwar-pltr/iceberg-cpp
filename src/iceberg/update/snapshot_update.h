@@ -19,6 +19,9 @@
 
 #pragma once
 
+/// \file iceberg/update/snapshot_update.h
+/// \brief Define base APIs for snapshot updates.
+
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -96,7 +99,7 @@ class ICEBERG_EXPORT SnapshotUpdate : public PendingUpdate {
   ///
   /// \param branch The name of a SnapshotRef of type branch.
   /// \return This update for method chaining.
-  auto& SetTargetBranch(this auto& self, const std::string& branch) {
+  auto& ToBranch(this auto& self, const std::string& branch) {
     if (branch.empty()) [[unlikely]] {
       return self.AddError(ErrorKind::kInvalidArgument, "Branch name cannot be empty");
     }
@@ -121,6 +124,25 @@ class ICEBERG_EXPORT SnapshotUpdate : public PendingUpdate {
   /// \return This update for method chaining.
   auto& Set(this auto& self, const std::string& property, const std::string& value) {
     static_cast<SnapshotUpdate&>(self).SetSummaryProperty(property, value);
+    return self;
+  }
+
+  /// \brief Configure an executor and max writer count for writing new manifests.
+  ///
+  /// If this method is not called, manifest writes remain serial. When configured,
+  /// files may be split into independent rolling-writer groups.
+  ///
+  /// \note Custom FileIO implementations and registered writer factories used for
+  /// manifest writes must support concurrent calls when an executor is configured.
+  auto& WriteManifestsWith(this auto& self, Executor& executor, int32_t parallelism) {
+    if (parallelism <= 0) [[unlikely]] {
+      return self.AddError(
+          ErrorKind::kInvalidArgument,
+          "Manifest write parallelism must be greater than 0, but was: {}", parallelism);
+    }
+
+    self.write_manifest_executor_ = std::ref(executor);
+    self.write_manifest_parallelism_ = parallelism;
     return self;
   }
 
@@ -251,6 +273,8 @@ class ICEBERG_EXPORT SnapshotUpdate : public PendingUpdate {
  private:
   const bool can_inherit_snapshot_id_{true};
   const std::string commit_uuid_;
+  OptionalExecutor write_manifest_executor_;
+  int32_t write_manifest_parallelism_{1};
   std::atomic<int32_t> manifest_count_{0};
   std::atomic<int32_t> attempt_{0};
   std::vector<std::string> manifest_lists_;

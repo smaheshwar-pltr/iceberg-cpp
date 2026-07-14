@@ -18,6 +18,7 @@
 conf_data = configuration_data()
 version = meson.project_version()
 version_suffix = '-SNAPSHOT'
+version_string = version + version_suffix
 components = version.split('.')
 assert(
     components.length() >= 3,
@@ -29,7 +30,30 @@ ver_patch = components[2]
 conf_data.set('PROJECT_VERSION_MAJOR', ver_major)
 conf_data.set('PROJECT_VERSION_MINOR', ver_minor)
 conf_data.set('PROJECT_VERSION_PATCH', ver_patch)
-conf_data.set('ICEBERG_VERSION_STRING', version + version_suffix)
+conf_data.set('ICEBERG_VERSION_STRING', version_string)
+git = find_program('git', required: false)
+git_commit_id = 'unknown'
+if git.found()
+    git_result = run_command(
+        git,
+        '-C',
+        meson.project_source_root(),
+        'rev-parse',
+        'HEAD',
+        check: false,
+    )
+    if git_result.returncode() == 0
+        git_commit_id_candidate = git_result.stdout().strip()
+        if git_commit_id_candidate != ''
+            git_commit_id = git_commit_id_candidate
+        endif
+    endif
+endif
+conf_data.set('ICEBERG_GIT_COMMIT_ID', git_commit_id)
+conf_data.set(
+    'ICEBERG_FULL_VERSION_STRING',
+    'Apache Iceberg-CPP ' + version_string + ' (commit ' + git_commit_id + ')',
+)
 conf_data.set('PROJECT_NAME', meson.project_name())
 configure_file(
     input: 'version.h.in',
@@ -45,6 +69,7 @@ iceberg_include_dir = include_directories('..')
 iceberg_sources = files(
     'arrow_c_data_guard_internal.cc',
     'arrow_c_data_util.cc',
+    'arrow_row_builder.cc',
     'catalog/memory/in_memory_catalog.cc',
     'catalog/session_catalog.cc',
     'catalog/session_context.cc',
@@ -133,6 +158,7 @@ iceberg_sources = files(
     'update/merging_snapshot_update.cc',
     'update/overwrite_files.cc',
     'update/pending_update.cc',
+    'update/rewrite_files.cc',
     'update/row_delta.cc',
     'update/set_snapshot.cc',
     'update/snapshot_manager.cc',
@@ -172,6 +198,8 @@ iceberg_data_sources = files(
     'data/data_writer.cc',
     'data/delete_filter.cc',
     'data/delete_loader.cc',
+    'data/deletion_vector_writer.cc',
+    'data/dv_util.cc',
     'data/equality_delete_writer.cc',
     'data/file_scan_task_reader.cc',
     'data/position_delete_writer.cc',
@@ -196,9 +224,27 @@ croaring_dep = dependency('croaring', static: croaring_needs_static)
 nanoarrow_dep = dependency('nanoarrow')
 nlohmann_json_dep = dependency('nlohmann_json')
 spdlog_dep = dependency('spdlog')
+# utf8proc's header declares its functions __declspec(dllimport) on Windows unless
+# UTF8PROC_STATIC is defined, and the wrap does not propagate that define to consumers.
+# Define it whenever utf8proc is linked statically, so the header's declarations match
+# how it is linked. Harmless on other platforms.
+utf8proc_needs_static = get_option('default_library') == 'static'
+utf8proc_dep = dependency('libutf8proc', static: utf8proc_needs_static)
+if utf8proc_needs_static
+    utf8proc_dep = declare_dependency(
+        compile_args: ['-DUTF8PROC_STATIC'],
+        dependencies: utf8proc_dep,
+    )
+endif
 zlib_dep = dependency('zlib')
 
-iceberg_deps = [nanoarrow_dep, nlohmann_json_dep, spdlog_dep, zlib_dep]
+iceberg_deps = [
+    nanoarrow_dep,
+    nlohmann_json_dep,
+    spdlog_dep,
+    utf8proc_dep,
+    zlib_dep,
+]
 
 iceberg_lib = library(
     'iceberg',
@@ -316,4 +362,8 @@ subdir('inspect')
 
 if get_option('tests').enabled()
     subdir('test')
+endif
+
+if get_option('benchmarks').enabled()
+    subdir('benchmark')
 endif

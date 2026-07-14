@@ -83,6 +83,7 @@ endfunction()
 # ICEBERG_AVRO_GIT_URL       - Apache Avro git repository URL
 # ICEBERG_NANOARROW_URL      - Nanoarrow tarball URL
 # ICEBERG_CROARING_URL       - CRoaring tarball URL
+# ICEBERG_UTF8PROC_URL       - utf8proc tarball URL
 # ICEBERG_NLOHMANN_JSON_URL  - nlohmann-json tarball URL
 # ICEBERG_SPDLOG_URL         - spdlog tarball URL
 # ICEBERG_CPR_URL            - cpr tarball URL
@@ -120,6 +121,20 @@ else()
   )
 endif()
 
+set(ICEBERG_UTF8PROC_BUILD_VERSION "2.10.0")
+set(ICEBERG_UTF8PROC_BUILD_SHA256_CHECKSUM
+    "276a37dc4d1dd24d7896826a579f4439d1e5fe33603add786bb083cab802e23e")
+
+if(DEFINED ENV{ICEBERG_UTF8PROC_URL})
+  set(UTF8PROC_SOURCE_URL "$ENV{ICEBERG_UTF8PROC_URL}")
+else()
+  # Use the release asset (stable bytes, matching subprojects/utf8proc.wrap) rather
+  # than the auto-generated tag archive, whose contents GitHub does not guarantee.
+  set(UTF8PROC_SOURCE_URL
+      "https://github.com/JuliaStrings/utf8proc/releases/download/v${ICEBERG_UTF8PROC_BUILD_VERSION}/utf8proc-${ICEBERG_UTF8PROC_BUILD_VERSION}.tar.gz"
+  )
+endif()
+
 # ----------------------------------------------------------------------
 # FetchContent
 
@@ -150,6 +165,10 @@ endmacro()
 
 function(resolve_arrow_dependency)
   prepare_fetchcontent()
+
+  # Prevent Arrow from injecting -Werror into CMAKE_CXX_FLAGS_DEBUG via
+  # arrow_add_werror_if_debug(). PRODUCTION level only adds standard warnings.
+  set(BUILD_WARNING_LEVEL PRODUCTION)
 
   set(ARROW_BUILD_SHARED OFF)
   set(ARROW_BUILD_STATIC ON)
@@ -429,6 +448,61 @@ function(resolve_croaring_dependency)
       PARENT_SCOPE)
   set(CROARING_VENDORED
       ${CROARING_VENDORED}
+      PARENT_SCOPE)
+endfunction()
+
+# ----------------------------------------------------------------------
+# utf8proc
+
+function(resolve_utf8proc_dependency)
+  prepare_fetchcontent()
+
+  # The vendored build needs no install rules; without this, CMake < 3.28 (where
+  # FetchContent has no EXCLUDE_FROM_ALL) would install utf8proc's headers and
+  # pkg-config file into the iceberg install prefix.
+  set(UTF8PROC_INSTALL OFF)
+
+  fetchcontent_declare(utf8proc
+                       ${FC_DECLARE_COMMON_OPTIONS}
+                       URL ${UTF8PROC_SOURCE_URL}
+                       URL_HASH "SHA256=${ICEBERG_UTF8PROC_BUILD_SHA256_CHECKSUM}"
+                       FIND_PACKAGE_ARGS
+                       NAMES
+                       utf8proc
+                       CONFIG)
+  fetchcontent_makeavailable(utf8proc)
+
+  if(utf8proc_SOURCE_DIR)
+    if(NOT TARGET utf8proc::utf8proc)
+      add_library(utf8proc::utf8proc INTERFACE IMPORTED)
+      target_link_libraries(utf8proc::utf8proc INTERFACE utf8proc)
+      target_include_directories(utf8proc::utf8proc INTERFACE ${utf8proc_SOURCE_DIR})
+    endif()
+
+    set(UTF8PROC_VENDORED TRUE)
+    # utf8proc's CMake puts a raw build-tree path in INTERFACE_INCLUDE_DIRECTORIES, which
+    # install(EXPORT) rejects. Wrap it in BUILD_INTERFACE so the export is valid; utf8proc
+    # is a private dependency, so installed consumers never need its headers.
+    set_target_properties(utf8proc
+                          PROPERTIES OUTPUT_NAME "iceberg_vendored_utf8proc"
+                                     POSITION_INDEPENDENT_CODE ON
+                                     INTERFACE_INCLUDE_DIRECTORIES
+                                     "$<BUILD_INTERFACE:${utf8proc_SOURCE_DIR}>")
+    install(TARGETS utf8proc
+            EXPORT iceberg_targets
+            RUNTIME DESTINATION "${ICEBERG_INSTALL_BINDIR}"
+            ARCHIVE DESTINATION "${ICEBERG_INSTALL_LIBDIR}"
+            LIBRARY DESTINATION "${ICEBERG_INSTALL_LIBDIR}")
+  else()
+    set(UTF8PROC_VENDORED FALSE)
+    list(APPEND ICEBERG_SYSTEM_DEPENDENCIES utf8proc)
+  endif()
+
+  set(ICEBERG_SYSTEM_DEPENDENCIES
+      ${ICEBERG_SYSTEM_DEPENDENCIES}
+      PARENT_SCOPE)
+  set(UTF8PROC_VENDORED
+      ${UTF8PROC_VENDORED}
       PARENT_SCOPE)
 endfunction()
 
@@ -730,6 +804,7 @@ endfunction()
 resolve_zlib_dependency()
 resolve_nanoarrow_dependency()
 resolve_croaring_dependency()
+resolve_utf8proc_dependency()
 resolve_nlohmann_json_dependency()
 resolve_spdlog_dependency()
 
