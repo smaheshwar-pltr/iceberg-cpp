@@ -27,6 +27,7 @@
 #include "iceberg/catalog/rest/types.h"
 #include "iceberg/file_io.h"
 #include "iceberg/file_io_registry.h"
+#include "iceberg/storage_credential.h"
 #include "iceberg/util/macros.h"
 
 namespace iceberg::rest {

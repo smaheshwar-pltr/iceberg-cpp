@@ -26,7 +26,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "iceberg/catalog/rest/types.h"
+#include "iceberg/catalog/rest/catalog_properties.h"
 #include "iceberg/file_io_registry.h"
 #include "iceberg/test/matchers.h"
 

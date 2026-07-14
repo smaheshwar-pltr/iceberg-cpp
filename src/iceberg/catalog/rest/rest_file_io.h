@@ -34,6 +34,7 @@
 #include "iceberg/file_io.h"
 #include "iceberg/file_io_registry.h"
 #include "iceberg/result.h"
+#include "iceberg/storage_credential.h"
 
 namespace iceberg::rest {
 

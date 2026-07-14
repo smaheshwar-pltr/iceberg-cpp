@@ -45,6 +45,7 @@
 #include "iceberg/result.h"
 #include "iceberg/schema.h"
 #include "iceberg/sort_order.h"
+#include "iceberg/storage_credential.h"
 #include "iceberg/table.h"
 #include "iceberg/table_requirement.h"
 #include "iceberg/table_requirements.h"

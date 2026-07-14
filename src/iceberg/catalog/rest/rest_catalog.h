@@ -22,6 +22,7 @@
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "iceberg/catalog.h"
 #include "iceberg/catalog/rest/catalog_properties.h"
