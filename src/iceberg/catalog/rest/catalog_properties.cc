@@ -23,6 +23,9 @@
 #include <string>
 #include <string_view>
 
+#include "iceberg/catalog/rest/constant.h"
+#include "iceberg/util/string_util.h"
+
 namespace iceberg::rest {
 
 RestCatalogProperties RestCatalogProperties::default_properties() {
@@ -38,7 +41,18 @@ RestCatalogProperties RestCatalogProperties::FromMap(
 
 std::unordered_map<std::string, std::string> RestCatalogProperties::ExtractHeaders()
     const {
-  return Extract(kHeaderPrefix);
+  auto headers = Extract(kHeaderPrefix);
+  // Request vended credentials unless the caller set the access-delegation header.
+  // Header names are case-insensitive.
+  const std::string canonical = StringUtils::ToUpper(kHeaderAccessDelegation);
+  const bool set_by_caller =
+      std::ranges::any_of(headers, [&canonical](const auto& header) {
+        return StringUtils::ToUpper(header.first) == canonical;
+      });
+  if (!set_by_caller) {
+    headers.emplace(kHeaderAccessDelegation, kAccessDelegationVendedCredentials);
+  }
+  return headers;
 }
 
 Result<std::string_view> RestCatalogProperties::Uri() const {

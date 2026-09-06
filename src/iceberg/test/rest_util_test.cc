@@ -232,4 +232,34 @@ TEST(RestCatalogPropertiesTest, SnapshotLoadingModeDefaultIsAll) {
   EXPECT_EQ(result.value(), SnapshotMode::kAll);
 }
 
+TEST(RestCatalogPropertiesTest, ExtractHeadersStripsHeaderPrefix) {
+  auto config = RestCatalogProperties::FromMap({{"header.Authorization", "Bearer token"},
+                                                {"header.X-Custom", "abc"},
+                                                {"uri", "https://localhost"}});
+  auto headers = config.ExtractHeaders();
+  EXPECT_EQ(headers.at("Authorization"), "Bearer token");
+  EXPECT_EQ(headers.at("X-Custom"), "abc");
+}
+
+TEST(RestCatalogPropertiesTest, ExtractHeadersRequestsVendedCredentialsByDefault) {
+  auto config = RestCatalogProperties::FromMap({{"uri", "https://localhost"}});
+  EXPECT_EQ(config.ExtractHeaders().at("X-Iceberg-Access-Delegation"),
+            "vended-credentials");
+}
+
+TEST(RestCatalogPropertiesTest, ExplicitAccessDelegationHeaderOverridesDefault) {
+  auto config = RestCatalogProperties::FromMap(
+      {{"header.X-Iceberg-Access-Delegation", "remote-signing"}});
+  EXPECT_EQ(config.ExtractHeaders().at("X-Iceberg-Access-Delegation"), "remote-signing");
+}
+
+TEST(RestCatalogPropertiesTest, ExplicitAccessDelegationHeaderOverrideIsCaseInsensitive) {
+  auto config = RestCatalogProperties::FromMap(
+      {{"header.x-iceberg-access-delegation", "remote-signing"}});
+  auto headers = config.ExtractHeaders();
+  // The caller's header wins and no duplicate canonical header is added.
+  EXPECT_EQ(headers.at("x-iceberg-access-delegation"), "remote-signing");
+  EXPECT_FALSE(headers.contains("X-Iceberg-Access-Delegation"));
+}
+
 }  // namespace iceberg::rest

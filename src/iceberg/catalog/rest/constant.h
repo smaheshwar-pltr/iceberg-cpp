@@ -32,11 +32,16 @@ inline const std::string kHeaderContentType = "Content-Type";
 inline const std::string kHeaderAccept = "Accept";
 inline const std::string kHeaderXClientVersion = "X-Client-Version";
 inline const std::string kHeaderUserAgent = "User-Agent";
+inline const std::string kHeaderAccessDelegation = "X-Iceberg-Access-Delegation";
 
 inline const std::string kMimeTypeApplicationJson = "application/json";
 inline const std::string kMimeTypeFormUrlEncoded = "application/x-www-form-urlencoded";
 inline const std::string kUserAgentPrefix = "iceberg-cpp/";
 inline const std::string kUserAgent = "iceberg-cpp/" ICEBERG_VERSION_STRING;
+
+// Value for the access-delegation header requesting that the server vend
+// short-lived storage credentials in load responses.
+inline const std::string kAccessDelegationVendedCredentials = "vended-credentials";
 
 inline const std::string kQueryParamParent = "parent";
 inline const std::string kQueryParamPageToken = "page_token";
