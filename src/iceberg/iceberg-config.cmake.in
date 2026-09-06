@@ -38,7 +38,7 @@
 @PACKAGE_INIT@
 
 set(ICEBERG_BUILD_STATIC "@ICEBERG_BUILD_STATIC@")
-set(ICEBERG_S3 "@ICEBERG_S3@")
+set(ICEBERG_AWSSDK_BUNDLED "@ICEBERG_AWSSDK_BUNDLED@")
 set(ICEBERG_SYSTEM_DEPENDENCIES "@ICEBERG_SYSTEM_DEPENDENCIES@")
 
 # Extra args forwarded to find_dependency() for specific dependencies.
@@ -105,7 +105,7 @@ if(TARGET iceberg::arrow_static)
   endforeach()
 
   # Arrow's bundled AWS libraries require platform-specific system libraries.
-  if(ICEBERG_S3)
+  if(ICEBERG_AWSSDK_BUNDLED)
     if(APPLE)
       find_library(CORE_FOUNDATION CoreFoundation)
       target_link_libraries(Arrow::arrow_bundled_dependencies
