@@ -31,10 +31,6 @@
 /// \file iceberg/catalog/rest/http_client.h
 /// \brief Http client for Iceberg REST API.
 
-namespace cpr {
-class ConnectionPool;
-}  // namespace cpr
-
 namespace iceberg::rest {
 
 /// \brief A simple wrapper for cpr::Response.
@@ -68,6 +64,8 @@ class ICEBERG_REST_EXPORT HttpResponse {
 };
 
 /// \brief HTTP client for making requests to Iceberg REST Catalog API.
+///
+/// Thread-safe.
 class ICEBERG_REST_EXPORT HttpClient {
  public:
   explicit HttpClient(std::unordered_map<std::string, std::string> default_headers = {});
@@ -111,8 +109,10 @@ class ICEBERG_REST_EXPORT HttpClient {
                               auth::AuthSession& session);
 
  private:
+  class ConnectionPools;
+
   std::unordered_map<std::string, std::string> default_headers_;
-  std::unique_ptr<cpr::ConnectionPool> connection_pool_;
+  std::unique_ptr<ConnectionPools> connection_pools_;
 };
 
 }  // namespace iceberg::rest
