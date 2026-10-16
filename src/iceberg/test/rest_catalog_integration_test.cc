@@ -445,7 +445,6 @@ TEST_F(RestCatalogIntegrationTest, ConcurrentHttpClientRequests) {
   }
 }
 
-// Query engines share one catalog between concurrent queries.
 TEST_F(RestCatalogIntegrationTest, ConcurrentCatalogUse) {
   constexpr int kThreads = 16;
   constexpr int kAsCatalogCalls = 10000;
