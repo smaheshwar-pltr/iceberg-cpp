@@ -28,6 +28,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "iceberg/constants.h"
 #include "iceberg/test/scan_test_base.h"
 
 namespace iceberg {
@@ -198,6 +199,30 @@ TEST_P(IncrementalAppendScanTest, UseBranch) {
     ASSERT_EQ(tasks.size(), 5);
   }
 
+  // Test: use_branch(main) without a range should return all 5 files on main
+  {
+    ICEBERG_UNWRAP_OR_FAIL(auto builder,
+                           MakeScanBuilder<IncrementalAppendScan>(metadata));
+    builder->UseBranch("main");
+    ICEBERG_UNWRAP_OR_FAIL(auto scan, builder->Build());
+    ICEBERG_UNWRAP_OR_FAIL(auto tasks, scan->PlanFiles());
+    ASSERT_EQ(tasks.size(), 5);
+  }
+
+  // Test: use_branch(b1) without a range should return all 3 files on b1
+  {
+    ICEBERG_UNWRAP_OR_FAIL(auto builder,
+                           MakeScanBuilder<IncrementalAppendScan>(metadata));
+    builder->UseBranch("b1");
+    ICEBERG_UNWRAP_OR_FAIL(auto scan, builder->Build());
+    ICEBERG_UNWRAP_OR_FAIL(auto tasks, scan->PlanFiles());
+    ASSERT_EQ(tasks.size(), 3);
+    EXPECT_THAT(GetPaths(tasks),
+                testing::UnorderedElementsAre("/path/to/file_a.parquet",
+                                              "/path/to/file_c_branch.parquet",
+                                              "/path/to/file_c_branch2.parquet"));
+  }
+
   // Test: from_snapshot_inclusive(t1).use_branch(b1) should return 3 files
   {
     ICEBERG_UNWRAP_OR_FAIL(auto builder,
@@ -236,6 +261,43 @@ TEST_P(IncrementalAppendScanTest, UseBranch) {
     ICEBERG_UNWRAP_OR_FAIL(auto scan, builder->Build());
     ICEBERG_UNWRAP_OR_FAIL(auto tasks, scan->PlanFiles());
     ASSERT_EQ(tasks.size(), 1);
+  }
+}
+
+TEST_P(IncrementalAppendScanTest, UseBranchWithoutMainSnapshot) {
+  auto version = GetParam();
+
+  // Only branch b1 has snapshots, main has no current snapshot
+  auto snapshot_a =
+      MakeAppendSnapshot(version, 1000L, std::nullopt, 1L, {"/path/to/file_a.parquet"});
+  auto snapshot_b =
+      MakeAppendSnapshot(version, 2000L, 1000L, 2L, {"/path/to/file_b.parquet"});
+
+  auto metadata = MakeTableMetadata(
+      {snapshot_a, snapshot_b}, kInvalidSnapshotId,
+      {{"b1", std::make_shared<SnapshotRef>(SnapshotRef{
+                  .snapshot_id = 2000L, .retention = SnapshotRef::Branch{}})}});
+
+  // Test: use_branch(b1) without a range should return all files on b1
+  {
+    ICEBERG_UNWRAP_OR_FAIL(auto builder,
+                           MakeScanBuilder<IncrementalAppendScan>(metadata));
+    builder->UseBranch("b1");
+    ICEBERG_UNWRAP_OR_FAIL(auto scan, builder->Build());
+    ICEBERG_UNWRAP_OR_FAIL(auto tasks, scan->PlanFiles());
+    ASSERT_EQ(tasks.size(), 2);
+    EXPECT_THAT(GetPaths(tasks),
+                testing::UnorderedElementsAre("/path/to/file_a.parquet",
+                                              "/path/to/file_b.parquet"));
+  }
+
+  // Test: without a branch or a range, there is nothing to scan
+  {
+    ICEBERG_UNWRAP_OR_FAIL(auto builder,
+                           MakeScanBuilder<IncrementalAppendScan>(metadata));
+    ICEBERG_UNWRAP_OR_FAIL(auto scan, builder->Build());
+    ICEBERG_UNWRAP_OR_FAIL(auto tasks, scan->PlanFiles());
+    EXPECT_TRUE(tasks.empty());
   }
 }
 

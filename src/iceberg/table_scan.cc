@@ -637,7 +637,10 @@ template <typename ScanTaskType>
 Result<std::vector<std::shared_ptr<ScanTaskType>>> ResolvePlanFiles(
     const IncrementalScan<ScanTaskType>& scan) {
   if (IsScanCurrentLineage(scan.context())) {
-    if (scan.metadata()->current_snapshot_id == kInvalidSnapshotId) {
+    ICEBERG_ASSIGN_OR_RAISE(
+        auto latest_snapshot,
+        SnapshotUtil::OptionalLatestSnapshot(*scan.metadata(), scan.context().branch));
+    if (latest_snapshot == nullptr) {
       return std::vector<std::shared_ptr<ScanTaskType>>{};
     }
   }
