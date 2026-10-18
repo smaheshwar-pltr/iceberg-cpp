@@ -27,6 +27,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "iceberg/constants.h"
 #include "iceberg/expression/expressions.h"
 #include "iceberg/snapshot.h"
 #include "iceberg/table_scan.h"
@@ -616,6 +617,42 @@ TEST_P(IncrementalChangelogScanTest, DeleteFilesAreNotSupported) {
                   IsError(ErrorKind::kNotSupported),
                   HasErrorMessage(
                       "Delete files are currently not supported in changelog scans")));
+}
+
+TEST_P(IncrementalChangelogScanTest, UseBranchWithoutMainSnapshot) {
+  auto version = GetParam();
+
+  // Only branch b1 has snapshots, main has no current snapshot
+  auto snapshot_a =
+      MakeAppendSnapshot(version, 1000L, std::nullopt, 1L, {"/path/to/file_a.parquet"});
+  auto snapshot_b =
+      MakeAppendSnapshot(version, 2000L, 1000L, 2L, {"/path/to/file_b.parquet"});
+
+  auto metadata = MakeTableMetadata(
+      {snapshot_a, snapshot_b}, kInvalidSnapshotId,
+      {{"b1", std::make_shared<SnapshotRef>(SnapshotRef{
+                  .snapshot_id = 2000L, .retention = SnapshotRef::Branch{}})}});
+
+  // use_branch(b1) without a range should return all changes on b1
+  ICEBERG_UNWRAP_OR_FAIL(auto builder,
+                         MakeScanBuilder<IncrementalChangelogScan>(metadata));
+  builder->UseBranch("b1");
+  ICEBERG_UNWRAP_OR_FAIL(auto scan, builder->Build());
+  ICEBERG_UNWRAP_OR_FAIL(auto tasks, scan->PlanFiles());
+  ASSERT_EQ(tasks.size(), 2);
+  SortTasks(tasks);
+
+  auto insert_t1 = std::dynamic_pointer_cast<AddedRowsScanTask>(tasks[0]);
+  ASSERT_NE(insert_t1, nullptr);
+  EXPECT_EQ(insert_t1->change_ordinal(), 0);
+  EXPECT_EQ(insert_t1->commit_snapshot_id(), 1000L);
+  EXPECT_EQ(insert_t1->data_file()->file_path, "/path/to/file_a.parquet");
+
+  auto insert_t2 = std::dynamic_pointer_cast<AddedRowsScanTask>(tasks[1]);
+  ASSERT_NE(insert_t2, nullptr);
+  EXPECT_EQ(insert_t2->change_ordinal(), 1);
+  EXPECT_EQ(insert_t2->commit_snapshot_id(), 2000L);
+  EXPECT_EQ(insert_t2->data_file()->file_path, "/path/to/file_b.parquet");
 }
 
 INSTANTIATE_TEST_SUITE_P(IncrementalChangelogScanVersions, IncrementalChangelogScanTest,
