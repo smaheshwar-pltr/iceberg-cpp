@@ -21,6 +21,7 @@
 
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -43,6 +44,10 @@
 namespace iceberg::rest {
 
 /// \brief Session-aware REST catalog root.
+///
+/// Thread-safe, as are the catalogs returned by AsCatalog() and WithContext(), provided
+/// the configured FileIO implementation, metrics reporters, metrics executor and auth
+/// manager (including its sessions) are thread-safe too.
 class ICEBERG_REST_EXPORT RestCatalog final
     : public SessionCatalog,
       public std::enable_shared_from_this<RestCatalog> {
@@ -229,7 +234,8 @@ class ICEBERG_REST_EXPORT RestCatalog final
   SnapshotMode snapshot_mode_;
   std::optional<ScanPlanningMode> client_scan_planning_mode_;
   SessionContext default_context_;
-  std::weak_ptr<Catalog> default_catalog_;
+  std::mutex default_catalog_mutex_;
+  std::weak_ptr<Catalog> default_catalog_;  // Guarded by default_catalog_mutex_.
   std::shared_ptr<MetricsReporter> reporter_;
   Executor* metrics_executor_ = nullptr;
 };
