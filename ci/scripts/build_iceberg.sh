@@ -168,7 +168,19 @@ if [[ -n "${ICEBERG_EXTRA_CMAKE_ARGS:-}" ]]; then
     CMAKE_ARGS+=("${EXTRA_CMAKE_ARGS[@]}")
 fi
 
-cmake "${CMAKE_ARGS[@]}" ${source_dir}
+# FetchContent downloads run during configure, and CMake does not retry HTTP
+# errors such as GitHub 504s, so retry the whole configure step.
+for attempt in 1 2 3; do
+    if cmake "${CMAKE_ARGS[@]}" ${source_dir}; then
+        break
+    fi
+    if [[ "${attempt}" == "3" ]]; then
+        echo "::error::CMake configure failed after 3 attempts"
+        exit 1
+    fi
+    echo "::warning::CMake configure failed (attempt ${attempt}/3), retrying in 30s"
+    sleep 30
+done
 
 cmake --build . --target install
 if [[ "${run_tests}" == "ON" ]]; then
