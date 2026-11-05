@@ -236,8 +236,19 @@ jobs:
       - name: Install dependencies
         if: ${{ steps.vcpkg-cache.outputs.cache-hit != 'true' }}
         shell: pwsh
+        # Retry to ride out transient mirror download failures (e.g. nanoarrow
+        # from archive.apache.org).
         run: |
-          vcpkg install zlib:x64-windows nlohmann-json:x64-windows nanoarrow:x64-windows roaring:x64-windows cpr:x64-windows openssl:x64-windows
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            vcpkg install zlib:x64-windows nlohmann-json:x64-windows nanoarrow:x64-windows roaring:x64-windows cpr:x64-windows openssl:x64-windows
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($attempt -lt 3) {
+              Write-Output "::warning::vcpkg install failed (attempt ${attempt}/3), retrying in 30s"
+              Start-Sleep -Seconds 30
+            }
+          }
+          Write-Output "::error::vcpkg install failed after 3 attempts"
+          exit 1
       - name: Set up sccache
         uses: ./.github/actions/setup-sccache
         with:
